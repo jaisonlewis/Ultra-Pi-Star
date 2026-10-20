@@ -33,22 +33,35 @@ echo "==> Deploying app to $APP_DIR"
 sudoc mkdir -p "$APP_DIR"
 sudoc chown "$USER:$USER" "$APP_DIR"
 
-# If this script is run from inside a cloned/copied repo, use it in place;
-# otherwise fetch from git remote.
+# Source the app three ways: run from inside a cloned/copied repo → use it
+# in place; fresh machine (curl|bash) → clone from GitHub; re-run on an
+# installed box → rsync the existing install dir is skipped.
+REPO_URL=https://github.com/jaisonlewis/Ultra-Pi-Star.git
 if [ -f "$(dirname "$0")/../run.py" ]; then
     SRC="$(cd "$(dirname "$0")/.." && pwd)"
+elif [ ! -f "$APP_DIR/run.py" ]; then
+    echo "==> Fetching source from GitHub"
+    sudoc apt-get install -y -qq git
+    CLONE="$(mktemp -d)"
+    git clone --depth 1 "$REPO_URL" "$CLONE/repo"
+    rsync -a "$CLONE/repo"/ "$APP_DIR"/ 2>/dev/null \
+      || cp -r "$CLONE/repo"/. "$APP_DIR"/
+    rm -rf "$CLONE"
+    SRC="$APP_DIR"
 else
     SRC="$APP_DIR"
 fi
-rsync -a --delete \
-    --exclude data --exclude '.git' \
-    --exclude '.venv' --exclude '__pycache__' \
-    --exclude 'chart-library' --exclude 'artwork' \
-    --exclude 'media' --exclude 'charts' --exclude 'models' \
-    --exclude 'research-worldparty' --exclude 'graphify-out' \
-    --exclude '.pytest_cache' \
-    "$SRC"/ "$APP_DIR"/ 2>/dev/null \
-  || cp -r "$SRC"/. "$APP_DIR"/
+if [ "$SRC" != "$APP_DIR" ]; then
+    rsync -a --delete \
+        --exclude data --exclude '.git' \
+        --exclude '.venv' --exclude '__pycache__' \
+        --exclude 'chart-library' --exclude 'artwork' \
+        --exclude 'media' --exclude 'charts' --exclude 'models' \
+        --exclude 'research-worldparty' --exclude 'graphify-out' \
+        --exclude '.pytest_cache' \
+        "$SRC"/ "$APP_DIR"/ 2>/dev/null \
+      || cp -r "$SRC"/. "$APP_DIR"/
+fi
 # media/ and charts/ are runtime data (downloads, uploads, user drops) —
 # a deploy must never delete them. The bundled demo assets are copied
 # without -u so existing files are left alone.

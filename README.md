@@ -81,23 +81,55 @@ Console prints the TV URL, LAN join URL (encoded in the QR code) and
 the host key. Open `/tv` for the TV; phones browse the join URL.
 ffmpeg + ffprobe must be on PATH.
 
-## Deploy to a Raspberry Pi
+## Install on a Raspberry Pi
 
-Flash Raspberry Pi OS (Lite or Desktop) with SSH enabled, then:
+Two ways, depending on how dedicated the Pi is:
+
+### Appliance install (boots straight into karaoke)
+
+On the Pi (or from a cloned repo — the same script the deploy uses):
+
+```bash
+curl -sSL https://raw.githubusercontent.com/jaisonlewis/Ultra-Pi-Star/AI/scripts/install-pi.sh | bash
+```
+
+Sets up `/opt/ultrapistar` with a venv, downloads the separation + pitch
+models, and registers:
+
+- `ultrapistar.service` (system) — the app on port 5000, boots with the Pi
+- `ultrapistar-kiosk.service` (user) — supervised Chromium kiosk → `/tv`
+- labwc autostart → boots straight into karaoke on the HDMI display
+- Raspberry Pi Connect for remote access
+
+To push updates from a dev machine instead:
 
 ```bash
 PI_PASS=<pi-password> ./scripts/deploy-pi.sh <pi-host-or-ip> <pi-user>
 ```
 
-The installer sets up `/opt/ultrapistar` with a venv, downloads the
-separation + pitch models, and registers:
-
-- `ultrapistar.service` (system) — the app on port 5000, boots with the Pi
-- `ultrapistar-kiosk.service` (user) — supervised Chromium kiosk → `/tv`
-- labwc autostart → boots straight into karaoke on the HDMI display
-
 Deploys are rsync-safe: `media/`, `charts/`, and `data/` are runtime
 data and never wiped — uploaded songs, downloads, and stems persist.
+
+### Lightweight install (on-demand, no takeover)
+
+Same Pi, but keeps your desktop/session — nothing starts at boot:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/jaisonlewis/Ultra-Pi-Star/AI/scripts/install-user.sh | bash
+```
+
+Installs to `~/ultrapistar` with the same venv + models, and drops a
+**disabled** user systemd unit. Then:
+
+```bash
+~/ultrapistar/.venv/bin/python ~/ultrapistar/run.py   # run a session
+systemctl --user start ultrapistar                  # or as a service
+systemctl --user enable ultrapistar                 # opt into autostart
+```
+
+No kiosk, no autostart, no remote-access changes — open
+`http://localhost:5000/tv` in any browser for the TV view.
+`UPS_APP_DIR` overrides the install location.
 
 ## Layout
 
@@ -135,7 +167,7 @@ chart-library/      imported chart libraries
 data/               sqlite db + config.yaml (runtime)
 models/             spleeter int8 + rmvpe.onnx (downloaded by installer)
 tests/              pytest suite
-scripts/            install-pi.sh, deploy-pi.sh, probes
+scripts/            install-pi.sh (appliance), install-user.sh (light), deploy-pi.sh, probes
 ```
 
 ## Config (env vars)
