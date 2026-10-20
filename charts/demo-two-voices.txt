@@ -1,0 +1,28 @@
+#TITLE:Two Voices
+#ARTIST:Ultra Pi Star Demo Band
+#LANGUAGE:English
+#BPM:120
+#GAP:500
+#MP3:demo-two-voices.mp4
+#VIDEO:demo-two-voices.mp4
+#EDITION:demo
+#YEAR:2026
+#DUETSINGERP1:Lead
+#DUETSINGERP2:Harmony
+P1
+: 0 4 60 You
+: 4 4 62  take
+- 8
+: 8 4 64  the
+: 12 4 65  high
+- 16
+: 16 8 67  road
+P2
+: 24 4 55 I'll
+: 28 4 57  take
+- 32
+: 32 4 59  the
+: 36 4 60  low
+- 40
+: 44 8 62  road
+E

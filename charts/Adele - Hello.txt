@@ -1,0 +1,9 @@
+#ARTIST:Adele
+#TITLE:Hello
+#BPM:200
+#GAP:500
+: 0 4 0 Hel
+: 4 4 0 lo
+- 8
+: 10 4 0 World
+E

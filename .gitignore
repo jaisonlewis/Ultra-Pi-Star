@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Runtime state & secrets
+data/
+*.db
+.pipconf/
+
+# Media & content — downloads, user chart drops, models, artwork cache
+media/
+chart-library/
+artwork/
+models/
+
+# Vendored GPL reference source (kept out of the repo; see NOTICE.md)
+research-worldparty/
+
+# Generated graph artifacts
+graphify-out/
+
+# OS / editor scratch
+NUL
+cj.txt
+cj2.txt
+p1.txt
+qb.json
+sr.json
+sr2.json
+*.log

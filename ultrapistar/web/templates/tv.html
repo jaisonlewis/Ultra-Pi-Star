@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Ultra Pi Star — TV{% endblock %}
+{% block body_class %}tv{% endblock %}
+{% block content %}
+<!-- Idle / join screen -->
+<section id="idle" class="tv-idle">
+  <header class="tv-brand">
+    <h1>Ultra&nbsp;Pi&nbsp;Star</h1>
+    <p class="tagline">Scan to join &amp; queue a song</p>
+  </header>
+  <div class="tv-join">
+    <img id="qr" src="{{ qr }}" alt="QR code to join" width="260" height="260">
+    <p class="join-url">{{ join_url }}</p>
+    <p class="host-code">Host code: <code>{{ host_key }}</code>
+      <span class="muted">— enter it on your phone to run the party</span></p>
+  </div>
+  <aside class="tv-queue">
+    <h2>Up next</h2>
+    <ol id="tv-queue-list" class="queue-list"></ol>
+    <p id="tv-queue-empty" class="muted">Queue is empty — grab your phone!</p>
+  </aside>
+</section>
+
+<!-- Playback view -->
+<section id="player" class="tv-player hidden">
+  <video id="video" playsinline></video>
+  <canvas id="viz" class="viz hidden"></canvas>
+  <div id="pre-song" class="pre-song hidden">
+    <p class="pre-label">Get ready</p>
+    <h2 id="pre-song-title"></h2>
+    <p id="pre-song-singers"></p>
+    <p id="pre-song-mode" class="badge"></p>
+    <p id="pre-stage" class="pre-stage"></p>
+    <p id="pre-count" class="countdown"></p>
+  </div>
+  <canvas id="pitch-lane" class="pitch-lane hidden"></canvas>
+  <div id="lyric-band" class="lyric-band hidden">
+    <div id="score-strip" class="score-strip"></div>
+    <div id="lyric-lines"></div>
+  </div>
+  <div id="final-score" class="final-score hidden"></div>
+  <div id="song-progress"><div id="song-progress-fill"></div></div>
+</section>
+
+<!-- floats over every screen until someone claims host on a phone -->
+<div id="host-badge" class="host-badge">Host code: <code>{{ host_key }}</code></div>
+
+<div id="toast" class="toast hidden"></div>
+<script src="{{ url_for('static', filename='js/common.js', v=v) }}"></script>
+<script src="{{ url_for('static', filename='js/tv.js', v=v) }}"></script>
+{% endblock %}

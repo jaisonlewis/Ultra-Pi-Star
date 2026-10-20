@@ -1,0 +1,11 @@
+# Ultra Pi Star user config — copy to data/config.yaml on the Pi
+# (/opt/ultrapistar/data/config.yaml after install) and edit.
+# Values here are only used when the matching UPS_* env var is unset.
+
+# Karaoke backing mix — how much of the vocal stem is bled back into
+# the accompaniment when vocal-cut playback is on. The separator's
+# vocal stem also contains leaked instruments (kick, snare, center-
+# panned leads), so a little bleed restores a lot of music body and
+# leaves a faint guide vocal. 0 = pure accompaniment (the sub-150 Hz
+# bass rescue still applies). Default 0.15.
+karaoke_guide: 0.15

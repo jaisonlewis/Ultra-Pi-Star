@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+{% block title %}Ultra Pi Star{% endblock %}
+{% block body_class %}phone{% endblock %}
+{% block content %}
+<header class="phone-header">
+  <h1>Ultra Pi Star</h1>
+  <span class="row" style="gap:.4rem">
+    <button id="btn-host" class="chip hidden">Host</button>
+    <span id="host-badge" class="badge scoring hidden">host</span>
+    <span id="conn-dot" class="dot"></span>
+  </span>
+</header>
+
+<section id="join" class="card">
+  <h2>Your singer name</h2>
+  <form id="join-form" class="row">
+    <input id="join-name" type="text" maxlength="24" placeholder="e.g. Alex"
+           autocomplete="nickname" required>
+    <button type="submit" class="primary">Join</button>
+  </form>
+</section>
+
+<main id="remote" class="hidden">
+  <nav class="tabs">
+    <button data-tab="search" class="tab active">Search</button>
+    <button data-tab="queue" class="tab">Queue</button>
+    <button data-tab="now" class="tab">Now playing</button>
+    <button data-tab="songs" class="tab">Local</button>
+    <button data-tab="host" id="tab-btn-host" class="tab hidden">Host</button>
+    <button data-tab="scores" class="tab">Scores</button>
+  </nav>
+
+  <section id="tab-search" class="tab-panel">
+    <form id="search-form" class="row">
+      <input id="search-q" type="search" placeholder="Artist or title…">
+      <button type="submit">Search</button>
+    </form>
+    <div id="browse-filters" class="chips">
+      <button class="chip active" data-f="all">All</button>
+      <button class="chip" data-f="duet">Duets</button>
+      <button class="chip" data-f="scored">Scorable</button>
+      <button class="chip" data-f="chart">Chart ready</button>
+      <button class="chip" id="btn-upload" style="margin-left:auto">Upload</button>
+    </div>
+    <p id="song-count" class="muted"></p>
+    <ul id="results" class="results"></ul>
+  </section>
+
+  <section id="tab-queue" class="tab-panel hidden">
+    <ol id="queue-list" class="queue-list"></ol>
+    <p id="queue-empty" class="muted">Nothing queued yet.</p>
+  </section>
+
+  <section id="tab-now" class="tab-panel hidden">
+    <div id="now-card" class="card muted">Nothing is playing.</div>
+    <!-- sound mixing: host always sees this; the singer at the mic gets it
+         while their song is on -->
+    <div id="mix-card" class="card hidden">
+      <h3>Sound</h3>
+      <p class="muted">Song volume <b id="song-vol-v">100</b>%
+        <span class="stepper">
+          <button class="chip fxbtn" data-for="song-vol" data-d="-10">−</button>
+          <button class="chip fxbtn" data-for="song-vol" data-d="10">+</button>
+        </span>
+        <input id="song-vol" type="range" min="0" max="100" value="100" class="hidden">
+      </p>
+      <p class="muted">Mic <button id="btn-mute" class="chip">Mute</button>
+        &nbsp;volume <b id="mic-vol-v">80</b>%
+        <span class="stepper">
+          <button class="chip fxbtn" data-for="mic-vol" data-d="-10">−</button>
+          <button class="chip fxbtn" data-for="mic-vol" data-d="10">+</button>
+        </span>
+        <input id="mic-vol" type="range" min="0" max="200" value="80" class="hidden">
+      </p>
+      <p class="muted">Echo <b id="mic-echo-v">0</b>%
+        <span class="stepper">
+          <button class="chip fxbtn" data-for="mic-echo" data-d="-10">−</button>
+          <button class="chip fxbtn" data-for="mic-echo" data-d="10">+</button>
+        </span>
+        <input id="mic-echo" type="range" min="0" max="100" value="0" class="hidden">
+      </p>
+      <p class="muted">Reverb <b id="mic-verb-v">0</b>%
+        <span class="stepper">
+          <button class="chip fxbtn" data-for="mic-verb" data-d="-10">−</button>
+          <button class="chip fxbtn" data-for="mic-verb" data-d="10">+</button>
+        </span>
+        <input id="mic-verb" type="range" min="0" max="100" value="0" class="hidden">
+      </p>
+      <p class="muted">Voice pitch <b id="mic-pitch-v">0</b>
+        <input id="mic-pitch" type="range" min="-6" max="6" step="1" value="0" class="hidden">
+      </p>
+      <div class="row" style="flex-wrap:wrap;gap:.4rem">
+        <button class="chip fxbtn" data-for="mic-pitch" data-v="-4">Deeper −4</button>
+        <button class="chip fxbtn" data-for="mic-pitch" data-v="-2">−2</button>
+        <button class="chip fxbtn" data-for="mic-pitch" data-v="0">Natural</button>
+        <button class="chip fxbtn" data-for="mic-pitch" data-v="2">+2</button>
+        <button class="chip fxbtn" data-for="mic-pitch" data-v="4">Squeaky +4</button>
+      </div>
+      <p class="muted">Pitch correct <b id="mic-tune-v">0</b>%
+        <span class="stepper">
+          <button class="chip fxbtn" data-for="mic-tune" data-d="-25">−</button>
+          <button class="chip fxbtn" data-for="mic-tune" data-d="25">+</button>
+        </span>
+        <input id="mic-tune" type="range" min="0" max="100" step="25" value="0" class="hidden"><br>
+        <span class="muted" style="font-size:.8em">snaps your voice to the
+        song's notes — 100% = full robot</span>
+      </p>
+      <label class="muted" style="display:flex;gap:.5em;align-items:center">
+        <input id="mic-polish" type="checkbox" style="width:auto">
+        Studio polish
+        <span class="muted" style="font-size:.8em">gate + compressor —
+        evens loud/quiet, cuts room noise (slight mic delay)</span>
+      </label>
+      <p class="muted">Mic delay <b id="mic-delay-v">0</b> ms
+        <button id="btn-calib" class="chip">Calibrate</button><br>
+        <span class="muted" style="font-size:.85em">plays 3 loud beeps —
+        quiet the room and hold the mic near a speaker</span></p>
+    </div>
+  </section>
+
+  <section id="tab-host" class="tab-panel hidden">
+    <div id="host-controls" class="card hidden">
+      <h3>Host controls</h3>
+      <div class="row">
+        <button id="btn-pause" class="warn">Pause</button>
+        <button id="btn-next" class="primary">Next song</button>
+      </div>
+      <div id="sync-controls" class="hidden" style="margin-top:.5rem">
+        <p class="muted">Lyrics/pitch sync <b id="sync-value">0</b> ms</p>
+        <div class="row">
+          <button class="chip" data-sync="-10000">-10s</button>
+          <button class="chip" data-sync="-1000">-1s</button>
+          <button class="chip" data-sync="-250">-¼s</button>
+          <button class="chip" data-sync="250">+¼s</button>
+          <button class="chip" data-sync="1000">+1s</button>
+          <button class="chip" data-sync="10000">+10s</button>
+        </div>
+        <div class="row" style="margin-top:.4rem">
+          <button id="btn-resync" class="chip"
+                  title="Collects ~10s of mic audio and finds the exact song position">Resync from audio</button>
+        </div>
+      </div>
+      <div id="mic-controls" class="hidden" style="margin-top:.5rem">
+        <p class="muted">Audio out
+          <select id="audio-out" style="max-width:16em"></select></p>
+        <div id="mic-list"></div>
+      </div>
+      <div class="row" style="margin-top:.5rem">
+        <button id="btn-release" class="chip">Step down</button>
+        <button id="btn-end-session" class="warn">End session</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-songs" class="tab-panel hidden">
+    <p class="muted">Media stored on the Pi — each version of a song is
+      listed separately with its lyric/scoring chart status. <b>Repair</b>
+      re-runs lyric matching + chart generation (handy when lyrics look
+      wrong or never loaded). Deleting frees space; scores are kept.
+      <b>Claim host</b> (top-right button + TV code) for both.</p>
+    <p id="songs-count" class="muted"></p>
+    <div id="songs-list"></div>
+    <p id="songs-empty" class="muted hidden">No downloaded songs yet —
+      queue something first.</p>
+  </section>
+
+  <section id="tab-scores" class="tab-panel hidden">
+    <div class="card">
+      <h3>Top singers</h3>
+      <ol id="singer-board" class="board"></ol>
+      <p id="singer-empty" class="muted">No scores yet — sing a scorable song.</p>
+    </div>
+    <div class="card">
+      <h3>Song records</h3>
+      <ul id="song-board" class="board"></ul>
+      <p id="song-empty" class="muted"></p>
+    </div>
+  </section>
+</main>
+
+<!-- Add-to-queue confirmation sheet -->
+<dialog id="confirm">
+  <form method="dialog" id="confirm-form">
+    <h2 id="confirm-title"></h2>
+    <p id="confirm-meta" class="muted"></p>
+    <p id="confirm-chart-note"></p>
+    <label>Your name <input id="confirm-name" maxlength="24" required></label>
+    <label id="confirm-part-wrap" class="hidden">Vocal part
+      <select id="confirm-part"><option value="">Either</option></select>
+    </label>
+    <label id="confirm-singer2-wrap" class="hidden">Second singer (duet)
+      <input id="confirm-singer2" maxlength="24">
+    </label>
+    <label class="row">
+      <input type="checkbox" id="confirm-vocal-cut" checked>
+      <span>Karaoke backing — cut the original vocals</span>
+    </label>
+    <menu class="row">
+      <button value="cancel">Cancel</button>
+      <button id="confirm-add" class="primary" value="default">Add to queue</button>
+    </menu>
+  </form>
+</dialog>
+
+<!-- Upload-your-own sheet -->
+<dialog id="upload">
+  <form method="dialog" id="upload-form">
+    <h2>Add your own song</h2>
+    <p class="muted">MP3 or MP4 from this device (ogg/wav/flac/webm/mkv work
+      too). Songs without video play with generated visuals.</p>
+    <input type="file" id="up-file" required
+           accept=".mp3,.m4a,.ogg,.wav,.flac,.mp4,.webm,.mkv,audio/*,video/*">
+    <label>Artist <input id="up-artist" maxlength="200"
+           placeholder="read from the filename if blank"></label>
+    <label>Title <input id="up-title" maxlength="200"></label>
+    <menu class="row">
+      <button value="cancel" formnovalidate>Cancel</button>
+      <button id="up-add" class="primary" value="default">Upload</button>
+    </menu>
+  </form>
+</dialog>
+
+<div id="toast" class="toast hidden"></div>
+<script src="{{ url_for('static', filename='js/common.js', v=v) }}"></script>
+<script src="{{ url_for('static', filename='js/phone.js', v=v) }}"></script>
+{% endblock %}

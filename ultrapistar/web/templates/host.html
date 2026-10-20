@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Ultra Pi Star — Host{% endblock %}
+{% block body_class %}phone host{% endblock %}
+{% block content %}
+<header class="phone-header">
+  <h1>Host console</h1>
+  <span id="conn-dot" class="dot"></span>
+</header>
+
+<section class="card">
+  <h2>Now playing</h2>
+  <div id="now-card" class="muted">Idle</div>
+  <div class="row">
+    <button id="btn-skip" class="warn">Skip song</button>
+    <button id="btn-play" class="primary">Start / next</button>
+  </div>
+  <div id="sync-controls" class="hidden" style="margin-top:.5rem">
+    <p class="muted">Lyrics sync <b id="sync-value">—</b> ms
+      <span id="sync-status"></span></p>
+    <div class="row">
+      <button class="chip" data-sync="-10000">-10s</button>
+      <button class="chip" data-sync="-1000">-1s</button>
+      <button class="chip" data-sync="-250">-¼s</button>
+      <button class="chip" data-sync="250">+¼s</button>
+      <button class="chip" data-sync="1000">+1s</button>
+      <button class="chip" data-sync="10000">+10s</button>
+    </div>
+    <div class="row" style="margin-top:.4rem">
+      <button id="btn-resync" class="chip"
+              title="Collects ~10s of room audio and finds the exact song position">Resync from audio</button>
+      <label class="muted" style="display:flex;gap:.4em;align-items:center">
+        <input id="autosync-mic" type="checkbox" checked style="width:auto">
+        mic auto-sync</label>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Queue <span id="queue-count" class="muted"></span></h2>
+  <ol id="host-queue" class="queue-list host-queue"></ol>
+  <button id="btn-clear" class="danger">Clear queue</button>
+</section>
+
+<section class="card">
+  <h2>Charts <span id="chart-count" class="muted"></span></h2>
+  <ul id="pending-charts" class="queue-list"></ul>
+  <p id="charts-empty" class="muted">No unverified charts — drops in
+    <code>charts/</code> and chart-library auto-match songs.</p>
+  <button id="btn-rescan">Rescan chart folders</button>
+</section>
+
+<section class="card">
+  <h2>Audio &amp; mics</h2>
+  <p class="muted">Audio out
+    <select id="audio-out" style="max-width:18em"></select></p>
+  <p class="muted">Song volume <b id="song-vol-v">—</b>%
+    <span class="stepper">
+      <button class="chip" data-vold="-10">−</button>
+      <button class="chip" data-vold="10">+</button>
+    </span></p>
+  <div id="mic-list"></div>
+  <p class="muted">Mic monitor <b id="mic-vol-v">—</b>%
+    <span class="stepper">
+      <button class="chip" data-mvold="-10">−</button>
+      <button class="chip" data-mvold="10">+</button>
+    </span>
+    <button id="btn-mute" class="chip">Mute</button>
+    <button id="btn-calib" class="chip"
+            title="Plays 3 loud beeps — quiet the room and hold the mic near a speaker">Calibrate delay</button>
+    <span id="mic-delay-v" class="muted"></span></p>
+  <p id="audio-empty" class="muted hidden">No audio devices found — is
+    PipeWire running on the Pi?</p>
+</section>
+
+<section class="card">
+  <h2>Room</h2>
+  <p class="muted">Join link: <code>{{ join_url }}</code></p>
+  <button id="btn-end-session" class="danger">End session (clear queue + release host)</button>
+</section>
+
+<div id="toast" class="toast hidden"></div>
+<script src="{{ url_for('static', filename='js/common.js', v=v) }}"></script>
+<script src="{{ url_for('static', filename='js/host.js', v=v) }}"></script>
+{% endblock %}

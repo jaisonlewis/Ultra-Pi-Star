@@ -1,0 +1,25 @@
+#TITLE:Signal In The Noise
+#ARTIST:Ultra Pi Star Demo Band
+#LANGUAGE:English
+#BPM:120
+#GAP:1000
+#MP3:demo-signal-in-the-noise.mp4
+#VIDEO:demo-signal-in-the-noise.mp4
+#EDITION:demo
+#YEAR:2026
+: 0 4 60 Sig
+: 4 4 62 nal
+- 8
+: 8 4 64 in
+: 12 4 65  the
+- 16
+: 16 8 67 noise
+* 24 4 69 yeah
+- 28
+: 32 4 67 sing
+: 36 4 65  it
+: 40 4 64  out
+- 44
+: 48 8 62 loud
+: 56 4 60  now
+E

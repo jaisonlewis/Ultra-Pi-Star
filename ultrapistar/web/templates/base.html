@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}Ultra Pi Star{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css', v=v) }}">
+  <script>window.PAGE_V = "{{ v }}";</script>
+  <script src="{{ url_for('static', filename='vendor/socket.io.min.js', v=v) }}"></script>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+{% block content %}{% endblock %}
+</body>
+</html>
