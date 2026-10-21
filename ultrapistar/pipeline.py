@@ -577,6 +577,13 @@ def push_now_playing(ctx):
         waiting = None
         if not ref and entry:
             waiting = "download" if entry["status"] == "downloading" else "unavailable"
+            # a failed/stalled entry reaching the top of the queue gets
+            # its download re-kicked — ensure() dedupes in-flight work
+            # and retries 'failed', so transient batch failures (429s,
+            # restart kills) recover instead of stranding the TV
+            if entry["status"] != "downloading":
+                ctx["downloads"].ensure(entry)
+                waiting = "download"
         scoring = bool(entry and entry.get("chart_verified"))
         # hold the countdown until the whole queue-time pipeline has
         # finished — loudness, stems, lyric/chart gen and the warp all run

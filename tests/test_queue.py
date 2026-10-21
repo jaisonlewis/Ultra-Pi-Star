@@ -155,3 +155,43 @@ def test_remove_only_skips_queued(db, queue):
     queue.start_next()
     assert queue.remove(a) is False
     assert queue.now_playing() is not None
+
+
+class _SlowProvider:
+    """Fake provider whose download() takes long enough for a second
+    call to overlap if the manager weren't serialized."""
+    def __init__(self):
+        self.active = 0
+        self.max_active = 0
+        self.done = []
+
+    def download(self, entry, media_dir):
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        time.sleep(0.05)
+        self.active -= 1
+        self.done.append(entry["source_id"])
+        return entry["source_id"] + ".mp4"
+
+
+class _FakeProviders:
+    def __init__(self, prov):
+        self._prov = prov
+
+    def get(self, name):
+        return self._prov
+
+
+def test_downloads_run_one_at_a_time(db, tmp_config):
+    """A bulk playlist drop must serialize — never N parallel yt-dlp."""
+    from ultrapistar.downloads import DownloadManager
+    prov = _SlowProvider()
+    dm = DownloadManager(db, _FakeProviders(prov), tmp_config.media_dir,
+                         lambda: None, lambda eid: None)
+    for i in range(5):
+        dm.ensure({"entry_id": i + 1, "provider": "yt",
+                   "source_id": f"v{i}", "status": "queued",
+                   "local_path": None})
+    dm._q.join()
+    assert prov.max_active == 1
+    assert prov.done == ["v0", "v1", "v2", "v3", "v4"]   # FIFO order

@@ -614,6 +614,9 @@ def queue_add():
         return jsonify({"error": "unknown catalog entry"}), 404
     if isinstance(entry, tuple):
         return entry  # error response
+    if entry.get("skipped"):
+        return jsonify({"ok": True, "skipped": True,
+                        "reason": "song already in library"})
     if entry["status"] not in ("available", "downloading", "failed"):
         return jsonify({"error": f"entry not playable (status={entry['status']})"}), 409
     if not ctx["providers"].enabled(entry["provider"]):
@@ -650,6 +653,12 @@ def queue_add():
                     "state": ctx["queue"].snapshot()})
 
 
+def _song_has_media(ctx, song_id: int) -> bool:
+    return bool(ctx["db"].query(
+        "SELECT 1 FROM media_entry WHERE song_id=? AND status='available'"
+        " LIMIT 1", (song_id,)))
+
+
 def _resolve_entry(ctx, body) -> dict | tuple | None:
     """Existing catalog entry by id, or create one from a remote result."""
     if body.get("entry_id"):
@@ -666,7 +675,14 @@ def _resolve_entry(ctx, body) -> dict | tuple | None:
         "SELECT id FROM media_entry WHERE provider=? AND source_id=?",
         (provider, source_id))
     if found:
-        return ctx["catalog"].entry(found[0]["id"])
+        ent = ctx["catalog"].entry(found[0]["id"])
+        # batch imports can opt out of re-processing a song the library
+        # already has — checked BEFORE a second media entry is created
+        # on the same song row
+        if (body.get("skip_existing_song") and ent
+                and _song_has_media(ctx, ent["id"])):
+            return {"skipped": True}
+        return ent
 
     title = (body.get("title") or source_id).strip()[:200]
     artist = (body.get("artist") or provider).strip()[:200]
@@ -700,6 +716,8 @@ def _resolve_entry(ctx, body) -> dict | tuple | None:
         (artist, title))
     if row:
         song_id = row[0]["id"]
+        if body.get("skip_existing_song") and _song_has_media(ctx, song_id):
+            return {"skipped": True}
     else:
         song_id = ctx["catalog"].add_song(
             artist, title, edition=f"{provider}-{source_id}")

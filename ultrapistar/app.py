@@ -106,6 +106,17 @@ def create_app(config: Config | None = None, seed: bool = True,
         if entry:
             downloads.ensure(entry)
 
+    # downloads that already failed but still have a waiting queue item
+    # (e.g. throttled mid-batch) get a retry too — the serial worker
+    # drains them one at a time
+    for row in db.query(
+            "SELECT DISTINCT e.id FROM media_entry e"
+            " JOIN queue_item q ON q.media_entry_id=e.id"
+            " WHERE e.status='failed' AND q.status='queued'"):
+        entry = catalog.entry(row["id"])
+        if entry:
+            downloads.ensure(entry)
+
     # same for a song that was 'playing' when the service stopped — the
     # video is gone with the process, so the zombie row would otherwise
     # block every future advance()

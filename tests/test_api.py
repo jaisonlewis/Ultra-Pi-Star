@@ -557,3 +557,32 @@ def test_uploaded_song_is_queueable(client, tmp_config):
     r = client.post("/api/queue",
                     json={"entry_id": ent["entry_id"], "name": "Alex"})
     assert r.status_code == 200, r.get_json()
+
+
+def test_queue_skip_existing_song(client):
+    """Batch imports pass skip_existing_song — a song that already has
+    playable media is skipped instead of re-queued/re-downloaded."""
+    client.post("/api/join", json={"name": "Alex"})
+    entry = client.get("/api/search?q=signal").get_json()["results"][0]
+    body = {"provider": entry["provider"], "source_id": entry["source_id"],
+            "title": entry["title"], "artist": entry["artist"],
+            "name": "Alex", "skip_existing_song": True}
+    res = client.post("/api/queue", json=body)
+    assert res.status_code == 200
+    assert res.get_json()["skipped"] is True
+    # and nothing was actually queued
+    snap = client.get("/api/queue").get_json()
+    assert not snap["queue"]
+
+
+def test_queue_without_skip_reuses_entry(client):
+    """Same body without the flag behaves as before — the entry is
+    reused and queued normally."""
+    client.post("/api/join", json={"name": "Alex"})
+    entry = client.get("/api/search?q=signal").get_json()["results"][0]
+    body = {"provider": entry["provider"], "source_id": entry["source_id"],
+            "title": entry["title"], "artist": entry["artist"],
+            "name": "Alex"}
+    res = client.post("/api/queue", json=body)
+    assert res.status_code == 200
+    assert "skipped" not in res.get_json()

@@ -7,6 +7,8 @@ pre-song screen starts automatically.
 """
 from __future__ import annotations
 
+import itertools
+import queue as _queue
 import threading
 import time
 
@@ -25,9 +27,15 @@ class DownloadManager:
         self._on_available = on_available
         self._in_flight: set[int] = set()
         self._lock = threading.Lock()
+        # one download at a time: a bulk playlist drop must not spawn
+        # hundreds of yt-dlp processes and melt the box
+        self._q: _queue.PriorityQueue = _queue.PriorityQueue()
+        self._seq = itertools.count()
+        threading.Thread(target=self._worker, daemon=True,
+                         name="downloads").start()
 
     def ensure(self, entry: dict) -> str:
-        """Start a download if needed. Returns current status."""
+        """Queue a download if needed. Returns current status."""
         if entry.get("local_path") and self._file_exists(entry):
             return "available"
         if entry.get("status") == "failed":
@@ -37,8 +45,22 @@ class DownloadManager:
                 return "downloading"
             self._in_flight.add(entry["entry_id"])
         self._set_status(entry["entry_id"], "downloading")
-        threading.Thread(target=self._run, args=(dict(entry),), daemon=True).start()
+        # whatever the TV is waiting on jumps the line; everything else
+        # runs FIFO in the order it was queued
+        playing = self.db.query(
+            "SELECT media_entry_id FROM queue_item WHERE status='playing'"
+            " LIMIT 1")
+        prio = 0 if playing and playing[0]["media_entry_id"] == entry["entry_id"] else 1
+        self._q.put((prio, next(self._seq), dict(entry)))
         return "downloading"
+
+    def _worker(self) -> None:
+        while True:
+            _prio, _seq, entry = self._q.get()
+            try:
+                self._run(entry)
+            finally:
+                self._q.task_done()
 
     def _file_exists(self, entry) -> bool:
         from pathlib import Path
