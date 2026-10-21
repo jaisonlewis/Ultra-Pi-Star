@@ -654,9 +654,12 @@ def queue_add():
 
 
 def _song_has_media(ctx, song_id: int) -> bool:
+    # 'downloading' counts too — an entry mid-pipeline is already being
+    # processed; queueing a second copy of the same song would duplicate
+    # the download
     return bool(ctx["db"].query(
-        "SELECT 1 FROM media_entry WHERE song_id=? AND status='available'"
-        " LIMIT 1", (song_id,)))
+        "SELECT 1 FROM media_entry WHERE song_id=?"
+        " AND status IN ('available','downloading') LIMIT 1", (song_id,)))
 
 
 def _resolve_entry(ctx, body) -> dict | tuple | None:
