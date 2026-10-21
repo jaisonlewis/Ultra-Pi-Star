@@ -53,6 +53,22 @@ def create_app(config: Config | None = None, seed: bool = True,
             app.logger.warning("youtube provider enabled but yt-dlp not installed")
 
     socketio = SocketIO(app, async_mode=async_mode, cors_allowed_origins="*")
+    if async_mode == "eventlet":
+        # Emits from real worker threads (downloads, pipeline, watchdogs)
+        # can't switch into the hub's greenlets — eventlet raises
+        # "Cannot switch to a different thread" and the update is lost.
+        # schedule_call_global is the one hub primitive that is safe to
+        # call from any thread, so route every emit through it. Emits
+        # inside socket handlers just queue one loop tick later — same
+        # ordering, no behavioral change.
+        import eventlet
+        _hub = eventlet.hubs.get_hub()
+        _emit = socketio.emit
+
+        def _emit_threadsafe(*args, **kwargs):
+            _hub.schedule_call_global(0, _emit, *args, **kwargs)
+
+        socketio.emit = _emit_threadsafe
 
     def _emit_state():
         socketio.emit("state", queue.snapshot())
