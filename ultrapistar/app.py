@@ -30,8 +30,8 @@ def create_app(config: Config | None = None, seed: bool = True,
         config.data_dir.mkdir(parents=True, exist_ok=True)
         app.config["SECRET_KEY"] = _sec.token_urlsafe(32)
         secret_file.write_text(app.config["SECRET_KEY"])
-    # 8MB covers song uploads; station bundles push ~50MB media zips
-    app.config["MAX_CONTENT_LENGTH"] = 256 * 1024 * 1024
+    # station bundles push video + karaoke + stems (~300MB a song)
+    app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024
     # LAN app: always revalidate static so phones never run stale js
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 

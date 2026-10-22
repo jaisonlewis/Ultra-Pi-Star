@@ -70,6 +70,41 @@ across the library and toggling vocal-cut doesn't change the level.
 - Asset fingerprint handshake reloads stale kiosk pages after deploys
 - systemd units (`ultrapistar`, `ultrapistar-kiosk`) restart on crash
 
+## Prep station (GPU workstation)
+
+`station/` offloads the whole queue-time pipeline to a PC with a GPU —
+the Pi then only ever *plays* finished bundles:
+
+```bash
+pip install -r requirements.txt -r requirements-station.txt
+python -m station          # Tkinter window
+```
+
+Paste a video or playlist URL, pick the output (a prepared USB stick —
+auto-detected — or any folder), optionally tick "Push finished songs
+to Pi" with the Pi's address + host key.
+
+Per song it runs: yt-dlp download → loudness → **demucs htdemucs**
+separation → lyrics first (LRCLIB/SyncLRC — ASR is only the timing
+backbone, and the last-resort lyric source) → **faster-whisper
+large-v3** word timing (~99 languages incl. Hindi — whisper emits the
+native script) → **RMVPE** pitch → `.upsong` chart → karaoke backing.
+
+Two delivery paths:
+
+- **USB stick** — write bundles onto a prepared stick (the same
+  `ultrapistar/` or `.upsmedia` convention), plug it into the Pi. A
+  `manifest.json` on the media root self-registers at boot, or run
+  `POST /api/manage/import-scan` as host.
+- **LAN push** — each finished song posts a zip to
+  `POST /api/import-bundle` (host-key auth). Same registration: entry
+  lands `available` with its chart attached — the Pi never
+  reprocesses it. Already-known songs skip.
+
+Station-generated charts record the detected language on the song, and
+`norm_word` is Unicode-aware so Hindi and other non-Latin lyrics match
+their ASR evidence instead of normalizing to nothing.
+
 ## Run locally
 
 ```bash
