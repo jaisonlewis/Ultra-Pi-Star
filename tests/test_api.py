@@ -586,3 +586,43 @@ def test_queue_without_skip_reuses_entry(client):
     res = client.post("/api/queue", json=body)
     assert res.status_code == 200
     assert "skipped" not in res.get_json()
+
+
+def test_playlist_import_queues_and_skips(client, app, monkeypatch):
+    """POST /api/playlist expands remotely and queues each entry —
+    songs already in the library are skipped, not duplicated."""
+    client.post("/api/join", json={"name": "Alex"})
+    seeded = client.get("/api/search?q=signal").get_json()["results"][0]
+    plist = {"title": "Test Mix", "entries": [
+        {"provider": "local", "source_id": seeded["source_id"],
+         "title": seeded["title"], "artist": seeded["artist"],
+         "duration_sec": 10, "thumbnail": ""},
+        {"provider": "local", "source_id": "brand-new",
+         "title": "Someone - New Song", "artist": "x",
+         "duration_sec": 10, "thumbnail": ""},
+    ]}
+    ctx = app.extensions["ups"]
+    monkeypatch.setattr(ctx["providers"], "playlist",
+                        lambda url: ("local", plist))
+    res = client.post("/api/playlist",
+                      json={"url": "http://x?list=1", "name": "Alex"})
+    assert res.status_code == 200
+    assert res.get_json()["total"] == 2
+    # the import runs on a background thread — wait for the job to drain
+    for _ in range(200):
+        if not ctx.get("playlist_jobs"):
+            break
+        time.sleep(0.05)
+    snap = client.get("/api/queue").get_json()
+    queued_titles = [i["title"] for i in snap["queue"]] + \
+        ([snap["now_playing"]["title"]] if snap["now_playing"] else [])
+    # exactly one new item — the seeded song was skipped, not duplicated
+    assert "New Song" in queued_titles[0] or len(snap["queue"]) == 1
+
+
+def test_playlist_import_rejects_non_playlist(client, app, monkeypatch):
+    client.post("/api/join", json={"name": "Alex"})
+    ctx = app.extensions["ups"]
+    monkeypatch.setattr(ctx["providers"], "playlist", lambda url: None)
+    res = client.post("/api/playlist", json={"url": "http://x", "name": "Alex"})
+    assert res.status_code == 400

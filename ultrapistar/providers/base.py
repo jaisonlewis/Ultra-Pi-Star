@@ -42,3 +42,13 @@ class DownloadableProvider(MediaProvider, Protocol):
     def download(self, entry: dict, dest_dir) -> str:
         """Blocking download. Returns the local filename inside dest_dir."""
         ...
+
+
+class PlaylistProvider(MediaProvider, Protocol):
+    """Optional capability: expand a remote playlist URL into entries."""
+
+    def playlist(self, url: str) -> dict | None:
+        """Return {"title", "entries": [{source_id, title, artist,
+        duration_sec, thumbnail}, ...]} or None if url isn't a playlist
+        this provider handles."""
+        ...

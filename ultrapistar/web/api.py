@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 import threading
 import time
 from functools import wraps
@@ -608,19 +609,32 @@ def queue_add():
     if not perf_id:
         return jsonify({"error": "join with a display name first"}), 400
 
+    status, val = _queue_one(ctx, body, perf_id)
+    if status == "error":
+        msg, code = val
+        return jsonify({"error": msg}), code
+    if status == "skipped":
+        return jsonify({"ok": True, "skipped": True, "reason": val})
+    return jsonify({"ok": True, "queue_item_id": val,
+                    "state": ctx["queue"].snapshot()})
+
+
+def _queue_one(ctx, body, perf_id):
+    """Shared resolve → ingest → queue core for /queue and /playlist.
+    Returns ("queued", item_id) | ("skipped", reason) | ("error", (msg, code))."""
     entry = _resolve_entry(ctx, body)
     if entry is None:
-        current_app.logger.warning("queue_add unresolved entry; body=%r", body)
-        return jsonify({"error": "unknown catalog entry"}), 404
+        return ("error", ("unknown catalog entry", 404))
     if isinstance(entry, tuple):
-        return entry  # error response
+        resp, code = entry
+        msg = (resp.get_json(silent=True) or {}).get("error", "error")
+        return ("error", (msg, code))
     if entry.get("skipped"):
-        return jsonify({"ok": True, "skipped": True,
-                        "reason": "song already in library"})
+        return ("skipped", "song already in library")
     if entry["status"] not in ("available", "downloading", "failed"):
-        return jsonify({"error": f"entry not playable (status={entry['status']})"}), 409
+        return ("error", (f"entry not playable (status={entry['status']})", 409))
     if not ctx["providers"].enabled(entry["provider"]):
-        return jsonify({"error": f"provider '{entry['provider']}' not enabled"}), 409
+        return ("error", (f"provider '{entry['provider']}' not enabled", 409))
 
     # start ingest if the media isn't local yet
     if not ctx["providers"].resolve(entry):
@@ -631,6 +645,7 @@ def queue_add():
         ensure_map(ctx, entry["entry_id"])
 
     # duet: optional second singer
+    part = (body.get("part") or "").strip()
     perf2_id = None
     name2 = (body.get("name2") or "").strip()[:24]
     if entry["is_duet"] and name2:
@@ -649,8 +664,72 @@ def queue_add():
         push_now_playing(ctx)
     else:
         ctx["socketio"].emit("state", ctx["queue"].snapshot())
-    return jsonify({"ok": True, "queue_item_id": item_id,
-                    "state": ctx["queue"].snapshot()})
+    return ("queued", item_id)
+
+
+@bp.post("/playlist")
+def playlist_import():
+    """Queue every song in a remote playlist, one media entry per entry.
+
+    Expansion is a background job — downloads already serialize through
+    DownloadManager, and each entry gets the full queue-time pipeline
+    (stems, lyrics, chart) as it lands. Songs already in the library are
+    skipped (skip_existing_song semantics for every entry)."""
+    ctx = _ctx()
+    body = request.json or {}
+    url = (body.get("url") or "").strip()
+    if not url:
+        return jsonify({"error": "url required"}), 400
+    name = (body.get("name") or "").strip()[:24]
+    perf_id = session.get("performer_id")
+    if name:
+        perf_id = ctx["db"].add_performer(name)["id"]
+        session["performer_id"] = perf_id
+    if not perf_id:
+        return jsonify({"error": "join with a display name first"}), 400
+    found = ctx["providers"].playlist(url)
+    if not found:
+        return jsonify({"error": "no provider can read that playlist URL"}), 400
+    pname, plist = found
+    total = len(plist["entries"])
+    job_id = secrets.token_hex(4)
+    ctx.setdefault("playlist_jobs", {})[job_id] = {
+        "title": plist["title"], "total": total, "done": 0}
+
+    def work():
+        queued = skipped = failed = 0
+        try:
+            for e in plist["entries"]:
+                ebody = {"provider": pname, "source_id": e["source_id"],
+                         "title": e["title"], "artist": e.get("artist") or "",
+                         "duration_sec": e.get("duration_sec"),
+                         "thumbnail": e.get("thumbnail") or "",
+                         "skip_existing_song": True}
+                try:
+                    status, _ = _queue_one(ctx, ebody, perf_id)
+                    if status == "skipped":
+                        skipped += 1
+                    elif status == "queued":
+                        queued += 1
+                    else:
+                        failed += 1
+                except Exception:
+                    failed += 1
+                job = ctx["playlist_jobs"][job_id]
+                job["done"] += 1
+                ctx["socketio"].emit("playlist:progress", {
+                    "job": job_id, "done": job["done"], "total": total,
+                    "queued": queued, "skipped": skipped})
+        finally:
+            ctx["socketio"].emit("playlist:done", {
+                "job": job_id, "title": plist["title"], "queued": queued,
+                "skipped": skipped, "failed": failed})
+            ctx["playlist_jobs"].pop(job_id, None)
+
+    threading.Thread(target=work, daemon=True,
+                     name="playlist-import").start()
+    return jsonify({"ok": True, "job": job_id, "title": plist["title"],
+                    "total": total})
 
 
 def _song_has_media(ctx, song_id: int) -> bool:

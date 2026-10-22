@@ -84,6 +84,37 @@ class YouTubeProvider:
         normal = [r for r in out if not r["karaoke"]]
         return normal or out
 
+    def playlist(self, url: str) -> dict | None:
+        """Expand a YouTube playlist URL (list= param) into flat entries.
+        Dead/private videos are dropped. Returns None for non-playlist
+        URLs or when extraction yields nothing."""
+        if "list=" not in url:
+            return None
+        with _ydl({"extract_flat": "in_playlist", "skip_download": True,
+                   "noplaylist": False}) as ydl:
+            info = ydl.extract_info(url, download=False)
+        out = []
+        for e in (info or {}).get("entries") or []:
+            if not e or not e.get("id"):
+                continue
+            title = e.get("title")
+            # [Deleted video] / [Private video] can't download — skip now
+            # instead of failing per-entry later
+            if not title or title.startswith("["):
+                continue
+            out.append({
+                "provider": self.name,
+                "source_id": e["id"],
+                "title": title,
+                "artist": e.get("uploader") or e.get("channel") or "",
+                "duration_sec": e.get("duration"),
+                "thumbnail": (e.get("thumbnails") or [{}])[-1].get("url"),
+            })
+        if not out:
+            return None
+        return {"title": (info or {}).get("title") or "Playlist",
+                "entries": out}
+
     def lookup(self, source_id: str) -> dict | None:
         """Metadata for one video by id — the paste-a-link path. Full
         (non-flat) extract so private/blocked videos surface as errors."""

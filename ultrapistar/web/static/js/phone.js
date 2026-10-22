@@ -630,6 +630,34 @@ $("#search-form").addEventListener("submit", (e) => {
 });
 runSearch(""); // show library on open
 
+/* playlist import — expands server-side; songs queue one at a time
+   through the serial download pipeline */
+$("#playlist-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const url = $("#playlist-url").value.trim();
+  if (!url) return;
+  const st = $("#playlist-status");
+  st.classList.remove("hidden");
+  st.textContent = "Expanding playlist…";
+  try {
+    const r = await api("/api/playlist", "POST", { url, name: myName });
+    st.textContent = `Importing “${r.title}” — ${r.total} songs…`;
+  } catch (err) {
+    st.textContent = err.message;
+  }
+});
+socket.on("playlist:progress", (p) => {
+  const st = $("#playlist-status");
+  st.classList.remove("hidden");
+  st.textContent = `Importing ${p.done}/${p.total} — ${p.queued} queued, ${p.skipped} already in library`;
+});
+socket.on("playlist:done", (d) => {
+  const st = $("#playlist-status");
+  st.classList.remove("hidden");
+  st.textContent = `“${d.title}” done — ${d.queued} queued, ${d.skipped} skipped, ${d.failed} failed`;
+  $("#playlist-url").value = "";
+});
+
 /* confirm sheet */
 function openConfirm(entry) {
   pendingEntry = entry;

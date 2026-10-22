@@ -26,6 +26,21 @@ class ProviderRegistry:
         provider = self._providers.get(entry.get("provider", ""))
         return provider.resolve(entry) if provider else None
 
+    def playlist(self, url: str) -> tuple[str, dict] | None:
+        """First enabled provider that expands the URL wins.
+        Returns (provider_name, playlist) or None."""
+        for p in self._providers.values():
+            fn = getattr(p, "playlist", None)
+            if not fn:
+                continue
+            try:
+                res = fn(url)
+            except Exception:
+                res = None
+            if res:
+                return p.name, res
+        return None
+
     def search_remote(self, query: str, limit: int = 10) -> list[dict]:
         """Merge results from all enabled providers that support search."""
         results: list[dict] = []

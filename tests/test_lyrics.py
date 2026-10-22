@@ -237,3 +237,46 @@ def test_fetch_lyrics_seeds_canonical_pair():
                 side_effect=fake_fetch_all):
         api._fetch_lyrics(ent)
     assert seen["seeds"][0] == ("Jin", "Running Wild")
+
+
+class _FakeYdl:
+    def __init__(self, info):
+        self._info = info
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def extract_info(self, url, download=False):
+        return self._info
+
+
+def test_playlist_expansion_filters_dead_entries(monkeypatch, tmp_path):
+    """Flat playlist entries: dead/private videos dropped, live ones
+    normalized into queue bodies."""
+    from ultrapistar.providers.youtube import YouTubeProvider
+    info = {"title": "Mix", "entries": [
+        {"id": "a1", "title": "Song One", "uploader": "Chan",
+         "duration": 100},
+        {"id": "b2", "title": "[Deleted video]", "uploader": "X"},
+        {"id": "c3", "title": None, "uploader": "X"},
+        {"id": "d4", "title": "Song Two", "channel": "Chan2",
+         "duration": 200},
+    ]}
+    monkeypatch.setattr(
+        "ultrapistar.providers.youtube._ydl",
+        lambda opts: _FakeYdl(info))
+    pl = YouTubeProvider(tmp_path).playlist("http://x?v=a&list=PL1")
+    assert pl["title"] == "Mix"
+    ids = [e["source_id"] for e in pl["entries"]]
+    assert ids == ["a1", "d4"]
+    assert pl["entries"][1]["artist"] == "Chan2"
+
+
+def test_playlist_non_playlist_url_returns_none(tmp_path):
+    """A watch URL without list= isn't a playlist — callers get None."""
+    from ultrapistar.providers.youtube import YouTubeProvider
+    assert YouTubeProvider(tmp_path).playlist(
+        "https://www.youtube.com/watch?v=abc") is None
