@@ -1,0 +1,5 @@
+# GPU prep-station extras — on top of requirements.txt.
+# Run: python -m station   (from the repo root, torch+CUDA already installed)
+faster-whisper>=1.1   # large-v3 multilingual ASR (incl. Hindi)
+demucs>=4.1           # htdemucs vocal separation on CUDA
+rmvpe-onnx>=0.2       # pitch extraction (rmvpe.onnx via `rmvpe-onnx download`)

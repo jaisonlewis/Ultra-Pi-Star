@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import shutil
 import threading
 import time
 from functools import wraps
@@ -108,20 +109,14 @@ def _perf_device(ctx, perf_id) -> str | None:
     return None
 
 
-# youtube.com/watch?v=, youtu.be/, shorts/, embed/, music.youtube.com
-_YT_LINK = re.compile(
-    r"(?:youtube\.com/(?:watch\?[^#]*v=|shorts/|embed/)|youtu\.be/)"
-    r"([A-Za-z0-9_-]{11})")
-
-
 @bp.get("/search")
 def search():
+    from ..providers.youtube import video_id_from_url
     q = request.args.get("q", "").strip()
     ctx = _ctx()
     # pasted YouTube link → resolve it directly, no searching
-    m = _YT_LINK.search(q)
-    if m and ctx["providers"].enabled("youtube"):
-        vid = m.group(1)
+    vid = video_id_from_url(q)
+    if vid and ctx["providers"].enabled("youtube"):
         known = ctx["db"].query(
             "SELECT id FROM media_entry WHERE provider='youtube'"
             " AND source_id=?", (vid,))
@@ -437,6 +432,43 @@ def manage_repair_all():
     threading.Thread(target=sweep, daemon=True,
                      name="repair-all").start()
     return jsonify({"ok": True, "running": True})
+
+
+@bp.post("/manage/import-scan")
+@host_required
+def manage_import_scan():
+    """Register station-prepared bundles on any media root (USB stick
+    workflow) — every manifest.json found is imported; already-known
+    songs are skipped."""
+    from ..imports import scan_roots
+    return jsonify({"ok": True, "roots": scan_roots(_ctx())})
+
+
+@bp.post("/import-bundle")
+@host_required
+def import_bundle():
+    """Accept one station-pushed bundle zip, unpack, and register it.
+
+    The zip carries media + sidecars + chart.upsong + manifest.json
+    with flat filenames; files move into the media write root, the
+    chart into chart-library/generated."""
+    from ..imports import unpack_bundle, import_manifest
+    f = request.files.get("bundle")
+    if f is None:
+        return jsonify({"error": "bundle file required"}), 400
+    ctx = _ctx()
+    staging = Path(ctx["config"].data_dir) / "import-staging"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True, exist_ok=True)
+    zpath = staging / "bundle.zip"
+    f.save(zpath)
+    try:
+        man = unpack_bundle(zpath, staging / "files")
+    except (ValueError, Exception) as exc:
+        return jsonify({"error": str(exc)}), 400
+    counts = import_manifest(ctx, man)
+    shutil.rmtree(staging, ignore_errors=True)
+    return jsonify({"ok": True, **counts})
 
 
 @bp.post("/manage/normalize")

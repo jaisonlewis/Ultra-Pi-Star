@@ -317,5 +317,13 @@ def parse_lrc(text: str) -> list[tuple[int, str]]:
 
 
 def norm_word(w: str) -> str:
-    """Lowercase alphanumerics — the common form for lyric/ASR matching."""
-    return re.sub(r"[^a-z0-9']", "", w.lower())
+    """Lowercase alphanumerics — the common form for lyric/ASR matching.
+
+    Unicode-aware: Devanagari/CJK/Cyrillic letters and combining marks
+    survive so non-English songs (e.g. Hindi lyrics vs Hindi ASR) still
+    match — both sides normalize identically."""
+    import unicodedata
+    return "".join(
+        c for c in unicodedata.normalize("NFC", w.lower())
+        if c.isalnum() or c == "'" or unicodedata.category(c) in
+        ("Mn", "Mc"))

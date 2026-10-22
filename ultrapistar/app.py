@@ -30,7 +30,8 @@ def create_app(config: Config | None = None, seed: bool = True,
         config.data_dir.mkdir(parents=True, exist_ok=True)
         app.config["SECRET_KEY"] = _sec.token_urlsafe(32)
         secret_file.write_text(app.config["SECRET_KEY"])
-    app.config["MAX_CONTENT_LENGTH"] = 8 * 1024 * 1024
+    # 8MB covers song uploads; station bundles push ~50MB media zips
+    app.config["MAX_CONTENT_LENGTH"] = 256 * 1024 * 1024
     # LAN app: always revalidate static so phones never run stale js
     app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
@@ -146,6 +147,18 @@ def create_app(config: Config | None = None, seed: bool = True,
     # video is gone with the process, so the zombie row would otherwise
     # block every future advance()
     db.execute("UPDATE queue_item SET status='skipped' WHERE status='playing'")
+
+    # station-prepared bundles on a USB stick self-register: a prepared
+    # stick's manifest is scanned at boot so moving storage between the
+    # workstation and the Pi "just works"
+    try:
+        from .imports import scan_roots
+        _imp = scan_roots({"config": config, "db": db,
+                           "catalog": catalog})
+        if _imp:
+            app.logger.info("station import: %s", _imp)
+    except Exception as exc:
+        app.logger.warning("station import scan failed: %s", exc)
 
     app.extensions["ups"] = {
         # "app" lets worker threads use app.logger/app_context without

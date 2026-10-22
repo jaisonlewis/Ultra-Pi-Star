@@ -7,6 +7,7 @@ Downloads are for the user's own karaoke session; enable/disable with
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from .base import PlaybackRef
@@ -16,6 +17,17 @@ from .local import MIME_BY_EXT
 # serves >720p only as separate video+audio streams (merged to mp4)
 FORMAT = ("bv*[height<=1080]+ba[ext=m4a]/bv*[height<=1080]+ba/"
           "b[height<=1080]")
+
+# youtube.com/watch?v=, youtu.be/, shorts/, embed/, music.youtube.com
+_YT_LINK = re.compile(
+    r"(?:youtube\.com/(?:watch\?[^#]*v=|shorts/|embed/)|youtu\.be/)"
+    r"([A-Za-z0-9_-]{11})")
+
+
+def video_id_from_url(text: str) -> str | None:
+    """Extract a video id from any pasted YouTube URL form."""
+    m = _YT_LINK.search(text or "")
+    return m.group(1) if m else None
 
 
 def _ydl(opts: dict):
