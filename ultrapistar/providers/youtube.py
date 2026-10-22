@@ -28,8 +28,10 @@ def _ydl(opts: dict):
 class YouTubeProvider:
     name = "youtube"
 
-    def __init__(self, media_dir: Path):
+    def __init__(self, media_dir: Path, extra_dirs: tuple = ()):
         self.media_dir = Path(media_dir)
+        self.media_dirs = (self.media_dir,
+                           *(Path(d) for d in extra_dirs))
 
     # -- remote catalog search ------------------------------------------------
     # karaoke-channel fingerprints — official lyric videos are NOT here:
@@ -197,8 +199,9 @@ class YouTubeProvider:
         rel = entry.get("local_path")
         if not rel:
             return None
-        path = self.media_dir / rel
-        if not path.is_file():
+        path = next((d / rel for d in self.media_dirs
+                     if (d / rel).is_file()), None)
+        if not path:
             return None
         mime = MIME_BY_EXT.get(path.suffix.lower(), "application/octet-stream")
         return PlaybackRef("file", f"/media/{rel}", mime, entry.get("duration_sec"))

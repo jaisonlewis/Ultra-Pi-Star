@@ -170,6 +170,22 @@ tests/              pytest suite
 scripts/            install-pi.sh (appliance), install-user.sh (light), deploy-pi.sh, probes
 ```
 
+### USB media storage
+
+A mounted USB stick can take over media storage without losing the
+SD-card library. To opt a stick in, put either an `ultrapistar/` folder
+or an empty `.upsmedia` file at the stick's root (a random drive is
+never hijacked). On the next boot:
+
+- new downloads, uploads and derived files write to the stick
+- everything already on the SD card keeps resolving as a read fallback —
+  the two roots look like one library
+- pulling the stick just drops the new files from view; reinsert and
+  they're back
+
+Checked at boot under `/media`, `/run/media` and `/mnt`. Opt out with
+`UPS_NO_USB=1`; `UPS_MEDIA_DIR` always wins over auto-detection.
+
 ## Config (env vars)
 
 | Var | Default | Purpose |
@@ -178,7 +194,9 @@ scripts/            install-pi.sh (appliance), install-user.sh (light), deploy-p
 | `UPS_HOST` | 0.0.0.0 | bind address |
 | `UPS_HOST_KEY` | random per boot | host-console room code |
 | `UPS_DATA_DIR` | `data/` | SQLite + config.yaml |
-| `UPS_MEDIA_DIR` | `media/` | local media (downloads, uploads) |
+| `UPS_MEDIA_DIR` | auto | write target for media — a prepared USB stick if one is mounted, else `media/` |
+| `UPS_MEDIA_DIRS` | — | extra read-only media roots (colon-separated) |
+| `UPS_NO_USB` | — | set to `1` to disable USB media auto-detect |
 | `UPS_CHART_DIR` | `charts/` | `.txt` chart drop folder |
 | `UPS_CHART_LIB` | `chart-library/` | imported chart libraries |
 | `UPS_MODELS_DIR` | `models/` | separation + pitch models |

@@ -44,11 +44,13 @@ def create_app(config: Config | None = None, seed: bool = True,
 
     providers = ProviderRegistry()
     if "local" in config.enabled_providers:
-        providers.register(LocalProvider(config.media_dir))
+        providers.register(LocalProvider(config.media_dir,
+                                         config.media_extra_dirs))
     if "youtube" in config.enabled_providers:
         try:
             from .providers.youtube import YouTubeProvider
-            providers.register(YouTubeProvider(config.media_dir))
+            providers.register(YouTubeProvider(config.media_dir,
+                                               config.media_extra_dirs))
         except ImportError:
             app.logger.warning("youtube provider enabled but yt-dlp not installed")
 
@@ -94,7 +96,13 @@ def create_app(config: Config | None = None, seed: bool = True,
             ensure_map(ctx, entry_id)
 
     downloads = DownloadManager(db, providers, config.media_dir,
-                                _emit_state, _repush, _on_available)
+                                _emit_state, _repush, _on_available,
+                                media_extra_dirs=config.media_extra_dirs)
+    if config.media_extra_dirs:
+        app.logger.info(
+            "media roots: write=%s read-fallback=%s",
+            config.media_dir,
+            ", ".join(str(d) for d in config.media_extra_dirs))
 
     # orphaned intermediates — a normalization pass or yt-dlp download
     # interrupted mid-write leaves *.norm.* temps and .part/.ytdl files
@@ -103,7 +111,8 @@ def create_app(config: Config | None = None, seed: bool = True,
     from pathlib import Path
     try:
         cutoff = time.time() - 300
-        for f in Path(config.media_dir).iterdir():
+        for f in (p for root in config.media_roots()
+                  for p in root.iterdir() if root.is_dir()):
             n = f.name
             if (f.is_file() and f.stat().st_mtime < cutoff
                     and (".norm." in n or n.endswith(".part")

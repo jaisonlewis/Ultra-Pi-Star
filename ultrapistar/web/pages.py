@@ -75,5 +75,5 @@ def host_console():
 def media(filename: str):
     """Serve local-provider media files."""
     from flask import send_from_directory
-    media_dir = _ctx()["config"].media_dir
-    return send_from_directory(media_dir, filename)
+    path = _ctx()["config"].media_path(filename)
+    return send_from_directory(path.parent, path.name)

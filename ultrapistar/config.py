@@ -25,6 +25,43 @@ def detect_lan_ip() -> str:
         return "127.0.0.1"
 
 
+def find_usb_media_dir(bases: tuple = ()) -> Path | None:
+    """Prepared removable storage — mounted USB sticks win over the SD
+    card as the media write target.
+
+    A stick is 'prepared' when it has an ``ultrapistar`` folder or a
+    ``.upsmedia`` marker file at its root, so a random drive can't
+    hijack the library. Pi OS desktop automounts under
+    /media/<user>/<label> (or /run/media/<user>/<label>); manual
+    mounts typically land in /mnt.
+    """
+    if not bases:
+        bases = (Path("/media"), Path("/run/media"), Path("/mnt"))
+    for base in bases:
+        if not base.is_dir():
+            continue
+        mounts = []
+        for user_dir in base.iterdir():
+            mounts.append(user_dir)
+            if user_dir.is_dir():
+                try:
+                    mounts.extend(user_dir.iterdir())
+                except OSError:
+                    pass
+        for mount in mounts:
+            try:
+                if not mount.is_dir() or not os.access(mount, os.W_OK):
+                    continue
+                if (mount / ".upsmedia").exists():
+                    (mount / "ultrapistar").mkdir(exist_ok=True)
+                    return mount / "ultrapistar"
+                if (mount / "ultrapistar").is_dir():
+                    return mount / "ultrapistar"
+            except OSError:
+                continue
+    return None
+
+
 @dataclass
 class Config:
     host: str = field(default_factory=lambda: os.environ.get("UPS_HOST", "0.0.0.0"))
@@ -40,7 +77,19 @@ class Config:
         default_factory=lambda: Path(os.environ.get("UPS_DATA_DIR", BASE_DIR / "data"))
     )
     media_dir: Path = field(
-        default_factory=lambda: Path(os.environ.get("UPS_MEDIA_DIR", BASE_DIR / "media"))
+        default_factory=lambda: Path(
+            os.environ.get("UPS_MEDIA_DIR")
+            or ("" if os.environ.get("UPS_NO_USB") else find_usb_media_dir() or "")
+            or BASE_DIR / "media")
+    )
+    # extra read roots — media on the SD card keeps resolving after a
+    # prepared USB stick becomes the write target. UPS_MEDIA_DIRS adds
+    # more (colon-separated).
+    media_extra_dirs: tuple[Path, ...] = field(
+        default_factory=lambda: tuple(
+            Path(p) for p in
+            os.environ.get("UPS_MEDIA_DIRS", "").split(":")
+            if p.strip())
     )
     chart_dir: Path = field(
         default_factory=lambda: Path(os.environ.get("UPS_CHART_DIR", BASE_DIR / "charts"))
@@ -109,6 +158,17 @@ class Config:
 
     def __post_init__(self) -> None:
         self.db_path = self.data_dir / "ultrapistar.db"
+        # when a USB stick (or an explicit UPS_MEDIA_DIR) is the write
+        # target the SD media dir stays readable so the existing
+        # library keeps playing
+        default_media = BASE_DIR / "media"
+        extras = list(self.media_extra_dirs)
+        if self.media_dir != default_media and default_media.is_dir():
+            extras.append(default_media)
+        self.media_extra_dirs = tuple(
+            dict.fromkeys(
+                d for d in extras
+                if d != self.media_dir and d.is_dir()))
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.media_dir.mkdir(parents=True, exist_ok=True)
         self.chart_dir.mkdir(parents=True, exist_ok=True)
@@ -117,6 +177,22 @@ class Config:
         if self.config_file is None:
             self.config_file = self.data_dir / "config.yaml"
         self._apply_config_file()
+
+    def media_path(self, rel: str | Path) -> Path:
+        """Resolve an entry-relative media path across all roots —
+        the write target first, then extra roots (e.g. the SD card a
+        USB stick replaced). Misses resolve into media_dir so writers
+        always land on the primary root."""
+        rel = Path(rel)
+        for root in (self.media_dir, *self.media_extra_dirs):
+            p = root / rel
+            if p.exists():
+                return p
+        return self.media_dir / rel
+
+    def media_roots(self) -> tuple[Path, ...]:
+        """Every directory that may hold media files."""
+        return (self.media_dir, *self.media_extra_dirs)
 
     def _apply_config_file(self) -> None:
         """Read the optional YAML config; env-set values take precedence."""

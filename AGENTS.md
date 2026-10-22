@@ -45,5 +45,14 @@
   backfill via `POST /api/catalog/backfill-art` (host).
 - Env: `UPS_MIC_DEVICE` (default `default`), `UPS_DIFFICULTY` (0..2),
   `UPS_CHART_LIB`, `UPS_ARTWORK_DIR`.
+- Media roots: `media_dir` is the write target; `media_extra_dirs` are
+  read fallbacks. `config.media_path(rel)` resolves across all roots —
+  always use it for entry-relative reads (`local_path`, `inst_path`,
+  `*.vocals.wav`), never `Path(config.media_dir) / rel`. A USB stick
+  with an `ultrapistar/` dir or `.upsmedia` marker becomes the write
+  root at boot (scanned under /media, /run/media, /mnt; `UPS_NO_USB=1`
+  disables, `UPS_MEDIA_DIR` overrides, `UPS_MEDIA_DIRS` adds roots).
+  Derived files (stems, karaoke mp4s) are written next to their source
+  via `media.parent`, so they resolve on the same root as the original.
 - Project license is GPL-3.0 (user decision — ports from GPL-3.0 WorldParty).
   Port inventory lives in `NOTICE.md`.

@@ -256,30 +256,30 @@ def manage_songs():
         "   AND q.status='queued') AS queued"
         " FROM song s JOIN media_entry e ON e.song_id=s.id"
         " ORDER BY s.artist COLLATE NOCASE, s.title COLLATE NOCASE, e.id")
-    media_dir = Path(ctx["config"].media_dir)
+    cfg = ctx["config"]
     inflight = ctx.get("map_inflight", set())
     for r in rows:
-        p = media_dir / r["local_path"] if r["local_path"] else None
+        p = cfg.media_path(r["local_path"]) if r["local_path"] else None
         r["size_bytes"] = p.stat().st_size if p and p.is_file() else 0
-        stem = (media_dir / (Path(r["local_path"]).stem + ".vocals.wav")
+        stem = (cfg.media_path(Path(r["local_path"]).stem + ".vocals.wav")
                 if r["local_path"] else None)
         r["has_stem"] = bool(stem and stem.is_file())
         r["has_inst"] = bool(
-            r["inst_path"] and (media_dir / r["inst_path"]).is_file())
+            r["inst_path"] and cfg.media_path(r["inst_path"]).is_file())
         r["processing"] = r["entry_id"] in inflight
     return jsonify({"songs": rows})
 
 
 def _media_files_for(ctx, entries):
     """Disk files backing media entries (video + cached artwork)."""
-    media_dir = Path(ctx["config"].media_dir)
-    art_dir = Path(ctx["config"].artwork_dir)
+    cfg = ctx["config"]
+    art_dir = Path(cfg.artwork_dir)
     for e in entries:
         if e.get("local_path"):
-            yield media_dir / e["local_path"]
-            yield media_dir / (Path(e["local_path"]).stem + ".vocals.wav")
+            yield cfg.media_path(e["local_path"])
+            yield cfg.media_path(Path(e["local_path"]).stem + ".vocals.wav")
         if e.get("inst_path"):
-            yield media_dir / e["inst_path"]
+            yield cfg.media_path(e["inst_path"])
         thumb = e.get("thumbnail") or ""
         if thumb.startswith("/api/art/"):
             yield art_dir / thumb.rsplit("/", 1)[-1]
@@ -388,7 +388,7 @@ def _repair_entry(ctx, entry) -> None:
     # the analysis sidecar marks "generation already attempted" — clear
     # it so a repair actually re-runs the pipeline instead of falling
     # straight back to the imported chart
-    media = Path(ctx["config"].media_dir) / entry["local_path"]
+    media = ctx["config"].media_path(entry["local_path"])
     (media.parent / (media.stem + ".analysis.json")).unlink(
         missing_ok=True)
     ensure_map(ctx, entry_id)
@@ -463,7 +463,6 @@ def manage_normalize():
             rows = ctx["db"].query(
                 "SELECT id, local_path, inst_path FROM media_entry"
                 " WHERE local_path IS NOT NULL AND local_path != ''")
-            mdir = Path(ctx["config"].media_dir)
             for row in rows:
                 # never compete with the show — loudnorm's two-pass
                 # encode starves the renderer and stalls the player.
@@ -473,9 +472,10 @@ def manage_normalize():
                 if _media_in_use(ctx, row["id"]):
                     skipped += 1
                     continue
-                targets = [mdir / row["local_path"]]
+                targets = [ctx["config"].media_path(row["local_path"])]
                 if row["inst_path"]:
-                    targets.append(mdir / row["inst_path"])
+                    targets.append(
+                        ctx["config"].media_path(row["inst_path"]))
                 target = ctx["config"].target_lufs
                 for f in targets:
                     if not f.exists() or loudness.is_normed(f, target):

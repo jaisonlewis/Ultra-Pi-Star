@@ -11,6 +11,7 @@ import itertools
 import queue as _queue
 import threading
 import time
+from pathlib import Path
 
 from .db import Database
 from .providers import ProviderRegistry
@@ -18,10 +19,12 @@ from .providers import ProviderRegistry
 
 class DownloadManager:
     def __init__(self, db: Database, providers: ProviderRegistry, media_dir,
-                 emit_state, repush_now_playing, on_available=None):
+                 emit_state, repush_now_playing, on_available=None,
+                 media_extra_dirs: tuple = ()):
         self.db = db
         self.providers = providers
         self.media_dir = media_dir
+        self.media_roots = (media_dir, *(Path(d) for d in media_extra_dirs))
         self._emit_state = emit_state
         self._repush = repush_now_playing
         self._on_available = on_available
@@ -63,8 +66,8 @@ class DownloadManager:
                 self._q.task_done()
 
     def _file_exists(self, entry) -> bool:
-        from pathlib import Path
-        return (Path(self.media_dir) / entry["local_path"]).is_file()
+        return any((d / entry["local_path"]).is_file()
+                   for d in self.media_roots)
 
     def _set_status(self, entry_id: int, status: str,
                     local_path: str | None = None) -> None:

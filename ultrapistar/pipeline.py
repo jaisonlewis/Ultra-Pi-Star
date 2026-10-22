@@ -82,7 +82,7 @@ def ensure_processed(ctx, entry_id: int, item_id: int | None = None) -> None:
     ent = ctx["catalog"].entry(entry_id)
     if not ent or not ent.get("local_path"):
         return
-    media = Path(ctx["config"].media_dir) / ent["local_path"]
+    media = ctx["config"].media_path(ent["local_path"])
     if not media.exists():
         return
     mdir = Path(ctx["config"].models_dir)
@@ -533,7 +533,7 @@ def _audio_only(ctx, media_name: str) -> bool:
     if media_name in cache:
         return cache[media_name]
     from .separate import has_real_video
-    path = Path(ctx["config"].media_dir) / media_name
+    path = ctx["config"].media_path(media_name)
     cache[media_name] = not path.is_file() or not has_real_video(path)
     return cache[media_name]
 
@@ -565,7 +565,7 @@ def push_now_playing(ctx):
         want_cut = (ctx["config"].vocal_cut if item.get("vocal_cut") is None
                     else bool(item["vocal_cut"]))
         inst_ok = bool(inst and want_cut
-                       and (Path(ctx["config"].media_dir) / inst).is_file())
+                       and ctx["config"].media_path(inst).is_file())
         if ref and inst_ok:
             ref.uri = f"/media/{inst}"
         # tell the TV when the served file has no real video track (mp3s,
