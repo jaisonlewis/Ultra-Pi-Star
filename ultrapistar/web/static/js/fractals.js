@@ -135,6 +135,7 @@ void main() {
   let gl = null, canvas = null;
   let programs = [], cur = 0;
   let pulse = 0, styleT = 0, fade = 1;
+  let scale = 1, fpsAcc = 0, fpsN = 0;
 
   function compile(src, type) {
     const s = gl.createShader(type);
@@ -187,6 +188,20 @@ void main() {
     if (!gl || !programs.length) return false;
     if (gl.isContextLost && gl.isContextLost()) return false;
     pulse += (bands.bass - pulse) * Math.min(1, dt * 9);
+    // adaptive resolution: sustained low fps shrinks the drawing buffer
+    // (software-GL fallback, weak GPU) — CSS keeps it fullscreen
+    fpsAcc += dt; fpsN++;
+    if (fpsAcc >= 2) {
+      const fps = fpsN / fpsAcc;
+      fpsAcc = 0; fpsN = 0;
+      if (fps < 28 && scale > 0.5) {
+        scale = Math.max(0.5, scale - 0.25);
+        const r = canvas.getBoundingClientRect();
+        const dpr = Math.min(window.devicePixelRatio || 1, 1.5) * scale;
+        canvas.width = Math.max(2, Math.round(r.width * dpr));
+        canvas.height = Math.max(2, Math.round(r.height * dpr));
+      }
+    }
     styleT += dt;
     if (styleT > ROTATE_S) { cur = (cur + 1) % programs.length;
                              styleT = 0; fade = 0; }
