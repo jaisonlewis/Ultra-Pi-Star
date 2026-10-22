@@ -581,8 +581,10 @@ function preSong(payload) {
    and draw a beat-reactive scene on a fullscreen canvas fed by a WebAudio
    analyser. createMediaElementSource may only be called once per element,
    so once wired the analyser stays connected for the session. */
-const viz = $("#viz"), vizCtx = viz.getContext("2d");
-let vizOn = false, vizRaf = 0;
+const viz = $("#viz");
+let vizCtx = null;             // lazy — canvas binds to whichever ctx is made first
+let vizGL = null;              // null=untried, false=no WebGL, true=FractalViz up
+let vizOn = false, vizRaf = 0, vizLastT = 0;
 let audioCtx = null, analyser = null, freqData = null, waveData = null;
 let vizHue = 0, vizPulse = 0, vizPhase = 0;
 
@@ -614,12 +616,21 @@ function setVisuals(on) {
     viz.classList.remove("hidden");
     video.classList.add("audio-only");
     const r = viz.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     viz.width = Math.max(2, Math.round(r.width * dpr));
     viz.height = Math.max(2, Math.round(r.height * dpr));
-    vizCtx.fillStyle = "#04040c";
-    vizCtx.fillRect(0, 0, viz.width, viz.height);
+    if (vizGL === null) {
+      try { vizGL = !!FractalViz.init(viz); }
+      catch (e) { vizGL = false; }
+    }
+    if (!vizGL) {
+      // no WebGL — fall back to the 2D canvas scene
+      vizCtx = vizCtx || viz.getContext("2d");
+      vizCtx.fillStyle = "#04040c";
+      vizCtx.fillRect(0, 0, viz.width, viz.height);
+    }
     vizOn = true;
+    vizLastT = performance.now();
     vizRaf = requestAnimationFrame(drawViz);
   } else {
     vizOn = false;
@@ -629,14 +640,36 @@ function setVisuals(on) {
   }
 }
 
-function drawViz() {
-  vizRaf = requestAnimationFrame(drawViz);
-  const c = vizCtx, W = viz.width, H = viz.height, cx = W / 2, cy = H / 2;
+function vizBands() {
   analyser.getByteFrequencyData(freqData);
   analyser.getByteTimeDomainData(waveData);
-  let bass = 0;
-  for (let i = 0; i < 24; i++) bass += freqData[i];
-  bass /= 24 * 255;
+  const avg = (a, b) => {
+    let s = 0;
+    for (let i = a; i < b; i++) s += freqData[i];
+    return s / ((b - a) * 255);
+  };
+  return { bass: avg(2, 24), mid: avg(24, 90), tre: avg(90, 200) };
+}
+
+function drawViz() {
+  vizRaf = requestAnimationFrame(drawViz);
+  const now = performance.now();
+  const dt = Math.min(0.1, Math.max(0.001, (now - vizLastT) / 1000));
+  vizLastT = now;
+  const bands = vizBands();
+  if (vizGL) {
+    // false = context lost mid-run — drop to the 2D scene for good
+    if (FractalViz.render(bands, dt)) return;
+    vizGL = false;
+  }
+  drawViz2D(bands);
+}
+
+function drawViz2D(bands) {
+  const c = vizCtx;
+  if (!c) return;
+  const W = viz.width, H = viz.height, cx = W / 2, cy = H / 2;
+  const bass = bands.bass;
   vizPulse = vizPulse * 0.82 + bass * 0.18;
   vizHue = (vizHue + 0.25 + vizPulse * 1.6) % 360;
   vizPhase += 0.004 + vizPulse * 0.05;
