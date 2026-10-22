@@ -10,6 +10,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, ttk
 
+from . import gpu, settings
 from .bundle import find_prepared_drives
 from .jobs import Station
 
@@ -32,10 +33,13 @@ class App(tk.Tk):
         self.url.bind("<Return>", lambda _e: self.add_url())
         ttk.Button(top, text="Add", command=self.add_url).pack(side="left")
 
+        self._prefs = settings.load()
+
         mid = ttk.Frame(self, padding=(8, 0))
         mid.pack(fill="x")
         ttk.Label(mid, text="Output:").pack(side="left")
-        self.dest = tk.StringVar(value=self._default_dest())
+        self.dest = tk.StringVar(
+            value=self._prefs.get("dest") or self._default_dest())
         ttk.Entry(mid, textvariable=self.dest, width=46).pack(
             side="left", padx=6)
         ttk.Button(mid, text="Browse…", command=self.pick_dest).pack(
@@ -43,16 +47,38 @@ class App(tk.Tk):
 
         pirow = ttk.Frame(self, padding=(8, 4))
         pirow.pack(fill="x")
-        self.push_var = tk.BooleanVar(value=False)
+        self.push_var = tk.BooleanVar(
+            value=bool(self._prefs.get("push")))
         ttk.Checkbutton(pirow, text="Push finished songs to Pi",
                         variable=self.push_var).pack(side="left")
         ttk.Label(pirow, text="http://").pack(side="left", padx=(12, 0))
         self.pi_host = ttk.Entry(pirow, width=20)
-        self.pi_host.insert(0, "utra-pi-star.local:5000")
+        self.pi_host.insert(
+            0, self._prefs.get("pi_host", "utra-pi-star.local:5000"))
         self.pi_host.pack(side="left")
         ttk.Label(pirow, text="host key:").pack(side="left", padx=(8, 0))
         self.pi_key = ttk.Entry(pirow, width=8)
+        self.pi_key.insert(0, self._prefs.get("pi_key", ""))
         self.pi_key.pack(side="left")
+
+        tierrow = ttk.Frame(self, padding=(8, 0))
+        tierrow.pack(fill="x")
+        ttk.Label(tierrow, text="Models:").pack(side="left")
+        self._tier_keys = list(gpu.TIERS)
+        detected = gpu.detect_tier()
+        want = self._prefs.get("tier") or detected
+        self.tier = ttk.Combobox(
+            tierrow, state="readonly", width=26,
+            values=[f"{gpu.TIERS[k]['label']}" for k in self._tier_keys])
+        self.tier.set(gpu.TIERS[want if want in gpu.TIERS
+                                else detected]["label"])
+        self.tier.pack(side="left", padx=6)
+        gname = gpu.gpu_name()
+        ttk.Label(
+            tierrow,
+            text=(f"detected: {gname} ({gpu.gpu_vram_gb():.0f} GB)"
+                  if gname else "no GPU detected — CPU mode"),
+            foreground="#666").pack(side="left")
 
         cols = ("title", "stage", "status")
         self.tree = ttk.Treeview(self, columns=cols, show="headings",
@@ -79,14 +105,31 @@ class App(tk.Tk):
         if d:
             self.dest.set(d)
 
+    def _tier_key(self) -> str:
+        label = self.tier.get()
+        for k in self._tier_keys:
+            if gpu.TIERS[k]["label"] == label:
+                return k
+        return gpu.detect_tier()
+
+    def _save_prefs(self):
+        settings.save({"dest": self.dest.get(), "push": self.push_var.get(),
+                       "pi_host": self.pi_host.get().strip(),
+                       "pi_key": self.pi_key.get().strip(),
+                       "tier": self._tier_key()})
+
     def _ensure_station(self):
+        self._save_prefs()
         if self._station is None:
             push = ({"url": "http://" + self.pi_host.get().strip(),
                      "key": self.pi_key.get().strip()}
                     if self.push_var.get() else None)
             self._station = Station(
                 Path(self.dest.get()), REPO / "models",
-                on_event=lambda *a: self._events.put(a), push=push)
+                on_event=lambda *a: self._events.put(a), push=push,
+                tier=self._tier_key())
+        elif gpu.current_tier() != self._tier_key():
+            gpu.configure(self._tier_key())   # tier changed mid-run
 
     def add_url(self):
         url = self.url.get().strip()

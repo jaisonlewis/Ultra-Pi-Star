@@ -14,10 +14,14 @@ from pathlib import Path
 
 class Station:
     def __init__(self, dest: Path, models_dir: Path, on_event,
-                 push: dict | None = None):
+                 push: dict | None = None, tier: str | None = None):
         """``on_event(job_id, event, payload)`` — events: stage, done,
         failed, pushed. ``push``: {"url": pi, "key": host_key} enables
-        LAN push after each finished song."""
+        LAN push after each finished song. ``tier`` selects the GPU
+        model set (see gpu.TIERS); None leaves the current/default."""
+        if tier:
+            from . import gpu
+            gpu.configure(tier)
         self.dest = Path(dest)
         self.models_dir = Path(models_dir)
         self.on_event = on_event

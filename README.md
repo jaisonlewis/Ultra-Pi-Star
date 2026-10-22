@@ -82,7 +82,16 @@ python -m station          # Tkinter window
 
 Paste a video or playlist URL, pick the output (a prepared USB stick —
 auto-detected — or any folder), optionally tick "Push finished songs
-to Pi" with the Pi's address + host key.
+to Pi" with the Pi's address + host key. Settings persist between runs.
+
+**Model tiers** — pick what matches the card (auto-detected by default):
+
+| Tier | ASR | Separation |
+|---|---|---|
+| CPU (no GPU) | whisper small (int8) | htdemucs |
+| GPU ≤ 6 GB | whisper medium (fp16) | htdemucs |
+| GPU 8–16 GB | whisper large-v3 (fp16) | htdemucs |
+| GPU 24 GB+ | whisper large-v3 (fp16) | htdemucs_ft (fine-tuned) |
 
 Per song it runs: yt-dlp download → loudness → **demucs htdemucs**
 separation → lyrics first (LRCLIB/SyncLRC — ASR is only the timing
