@@ -12,6 +12,36 @@ import traceback
 from pathlib import Path
 
 
+_MEDIA_EXTS = (".mp4", ".mp3", ".m4a", ".webm", ".mkv")
+
+
+def _is_source_media(p: Path) -> bool:
+    """Original media only — derived sidecars (inst/vocals) never get
+    their own jobs."""
+    return (p.is_file() and p.suffix.lower() in _MEDIA_EXTS
+            and ".inst." not in p.name
+            and not p.name.endswith(".vocals.wav"))
+
+
+def _folder_rec(p: Path, row: dict | None) -> dict:
+    """Catalog row (or a bare ``yt-<id>`` filename) → a job rec the
+    pipeline can run without touching YouTube."""
+    import re
+    m = re.fullmatch(r"yt-([A-Za-z0-9_-]{6,})", p.stem)
+    return {
+        "provider": (row or {}).get("provider")
+                    or ("youtube" if m else "local"),
+        "source_id": (row or {}).get("source_id")
+                     or (m.group(1) if m else p.stem),
+        "artist": (row or {}).get("artist") or "",
+        "title": (row or {}).get("title") or p.stem,
+        "duration_sec": (row or {}).get("duration_sec"),
+        "thumbnail": (row or {}).get("thumbnail") or "",
+        "local_path": p.name,
+        "local_file": str(p),
+    }
+
+
 class Station:
     def __init__(self, dest: Path, models_dir: Path, on_event,
                  push: dict | None = None, tier: str | None = None):
@@ -66,6 +96,44 @@ class Station:
                 continue
             ids.append(self.add(e))
         return title, ids, len(skipped)
+
+    def add_folder(self, folder: Path) -> tuple[int, int]:
+        """Enqueue every media file in a staging folder that still needs
+        processing. A ``pi-catalog.json`` (exported from the Pi's
+        /api/manage/songs) supplies catalog metadata and tells us which
+        entries already carry a verified chart; bare ``yt-<id>`` files
+        self-describe. Returns (added, skipped)."""
+        import json
+        from .bundle import known_ids
+        folder = Path(folder)
+        cat = {}
+        catfile = folder / "pi-catalog.json"
+        if catfile.is_file():
+            try:
+                doc = json.loads(catfile.read_text(encoding="utf-8"))
+                for s in doc.get("songs", []):
+                    if s.get("local_path"):
+                        cat[s["local_path"]] = s
+            except (OSError, ValueError):
+                pass
+        known = known_ids(self.dest)
+        added = skipped = 0
+        for p in sorted(folder.iterdir()):
+            if not _is_source_media(p):
+                continue
+            row = cat.get(p.name)
+            if cat and row is None:
+                continue                    # orphan fragment
+            if row and row.get("scored"):
+                skipped += 1
+                continue                    # verified chart already
+            rec = _folder_rec(p, row)
+            if rec["source_id"] in known:
+                skipped += 1
+                continue
+            self.add(rec)
+            added += 1
+        return added, skipped
 
     def _loop(self):
         from .pipeline import process_song

@@ -118,6 +118,46 @@ class TestImportManifest:
         assert counts["skipped"] == 1 and counts["added"] == 0
         assert len(db.query("SELECT id FROM media_entry")) == 1
 
+    def test_updates_existing_entry(self, tmp_path, ictx, db):
+        """A bundle for an already-cataloged entry lands sidecars +
+        chart instead of skipping — the station-reprocess path."""
+        cat = ictx["catalog"]
+        media_dir = Path(ictx["config"].media_dir)
+        (media_dir / "yt-abc12345678.mp4").write_bytes(b"video")
+        sid = cat.add_song("Test Artist", "Test Song")
+        eid = cat.add_media_entry(sid, "youtube", "abc12345678",
+                                  local_path="yt-abc12345678.mp4",
+                                  status="available")
+        root = _bundle_root(tmp_path)
+        # media needn't ship — it resolves on the write root already
+        (root / "yt-abc12345678.mp4").unlink()
+        counts = import_manifest(ictx, root / "manifest.json")
+        assert counts["updated"] == 1 and counts["skipped"] == 0
+        e = db.query("SELECT inst_path FROM media_entry WHERE id=?",
+                     (eid,))[0]
+        assert e["inst_path"] == "yt-abc12345678.inst.mp4"
+        # sidecar landed on the write root even though media stayed put
+        assert (media_dir / "yt-abc12345678.inst.mp4").is_file()
+        ch = db.query(
+            "SELECT media_entry_id, verified FROM chart")[0]
+        assert ch["media_entry_id"] == eid and ch["verified"] == 1
+
+    def test_update_skips_identical_reimport(self, tmp_path, ictx, db):
+        cat = ictx["catalog"]
+        media_dir = Path(ictx["config"].media_dir)
+        (media_dir / "yt-abc12345678.mp4").write_bytes(b"video")
+        sid = cat.add_song("Test Artist", "Test Song")
+        cat.add_media_entry(sid, "youtube", "abc12345678",
+                            local_path="yt-abc12345678.mp4",
+                            status="available")
+        root = _bundle_root(tmp_path)
+        (root / "yt-abc12345678.mp4").unlink()
+        import_manifest(ictx, root / "manifest.json")
+        # importing the same bundle again changes nothing → skipped
+        counts = import_manifest(ictx, root / "manifest.json")
+        assert counts["skipped"] == 1 and counts["updated"] == 0
+        assert len(db.query("SELECT id FROM chart")) == 1
+
     def test_missing_media(self, tmp_path, ictx):
         root = tmp_path / "staging"
         root.mkdir()

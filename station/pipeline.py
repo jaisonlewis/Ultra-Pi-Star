@@ -50,8 +50,20 @@ def process_song(rec: dict, dest: Path, models_dir: Path,
     provider = YouTubeProvider(dest)
 
     on_stage("downloading")
-    fname = provider.download(rec, dest_dir=dest)
-    media = dest / fname
+    if rec.get("local_file"):
+        # media already on disk (pulled from the Pi / local staging) —
+        # copy it into the bundle root under its catalog filename so
+        # local_path still matches the Pi's entry
+        import shutil
+        media = Path(rec["local_file"])
+        target = dest / (rec.get("local_path") or media.name)
+        if media.resolve() != target.resolve():
+            if not target.exists():
+                shutil.copy2(media, target)
+            media = target
+    else:
+        fname = provider.download(rec, dest_dir=dest)
+        media = dest / fname
     rel = media.name
 
     on_stage("metadata")
@@ -61,7 +73,8 @@ def process_song(rec: dict, dest: Path, models_dir: Path,
     title = meta.get("track") or rec.get("title") or media.stem
 
     on_stage("normalizing")
-    loudness.normalize(media, target_i=norm_target)
+    if not loudness.is_normed(media, norm_target):
+        loudness.normalize(media, target_i=norm_target)
 
     on_stage("separating")
     inst_rel = media.stem + ".inst.mp4"

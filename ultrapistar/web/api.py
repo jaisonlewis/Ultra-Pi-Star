@@ -392,11 +392,10 @@ def _repair_entry(ctx, entry) -> None:
 @bp.post("/manage/repair-all")
 @host_required
 def manage_repair_all():
-    """Re-run generation for every entry whose chart is ASR-only.
-
-    After a lyrics-pipeline fix (canonical metadata, better candidates),
-    the library upgrades itself instead of each song needing a manual
-    repair. Imported charts are untouched; entries already carrying a
+    """Re-run generation where it's needed: ASR-only charts get a lyric
+    re-match, and available entries with no generated chart at all —
+    e.g. ones whose first attempt died mid-pipeline — get the full
+    pipeline. Imported charts are untouched; entries already carrying a
     lyric-sourced chart are skipped. Serial worker — songs repair one
     at a time in the background."""
     ctx = _ctx()
@@ -410,22 +409,23 @@ def manage_repair_all():
             rows = ctx["db"].query(
                 "SELECT e.id AS entry_id, e.local_path, c.file_path"
                 " FROM media_entry e"
-                " JOIN chart c ON c.media_entry_id=e.id"
-                " WHERE c.source_repo='generated'"
+                " LEFT JOIN chart c ON c.media_entry_id=e.id"
+                "  AND c.source_repo='generated'"
+                " WHERE e.status='available'"
                 " AND e.local_path IS NOT NULL AND e.local_path != ''")
             queued = 0
             for row in rows:
-                try:
-                    src = load_chart(row["file_path"]).source or {}
-                except Exception:
-                    continue             # unreadable — leave it alone
-                if src.get("lrc") or src.get("lyrics") == "lrc":
-                    continue             # already real lyrics
+                if row["file_path"]:
+                    try:
+                        src = load_chart(row["file_path"]).source or {}
+                    except Exception:
+                        continue         # unreadable — leave it alone
+                    if src.get("lrc") or src.get("lyrics") == "lrc":
+                        continue         # already real lyrics
                 _repair_entry(ctx, {"id": row["entry_id"],
                                     "local_path": row["local_path"]})
                 queued += 1
-            app.logger.info("repair-all: %d ASR-only charts queued",
-                            queued)
+            app.logger.info("repair-all: %d entries queued", queued)
         finally:
             ctx.pop("repair_all_inflight", None)
 

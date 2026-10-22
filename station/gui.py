@@ -44,6 +44,8 @@ class App(tk.Tk):
             side="left", padx=6)
         ttk.Button(mid, text="Browse…", command=self.pick_dest).pack(
             side="left")
+        ttk.Button(mid, text="Scan folder",
+                   command=self.scan_folder).pack(side="left", padx=4)
 
         pirow = ttk.Frame(self, padding=(8, 4))
         pirow.pack(fill="x")
@@ -151,6 +153,28 @@ class App(tk.Tk):
                                      if skipped else "")))
             except Exception as exc:
                 self._events.put((None, "summary", f"error: {exc}"))
+        threading.Thread(target=work, daemon=True).start()
+
+    def scan_folder(self):
+        """Process media already sitting in the output folder — e.g. a
+        staging root pulled off the Pi (with pi-catalog.json) or a folder
+        of local files. Anything already charted or bundled is skipped."""
+        self._ensure_station()
+        self.status.set("scanning output folder …")
+
+        def work():
+            try:
+                added, skipped = self._station.add_folder(
+                    Path(self.dest.get()))
+                for jid, job in list(self._station.jobs.items()):
+                    if job["status"] == "queued" and jid not in self._rows:
+                        self._events.put((jid, "queued", job["rec"]))
+                self._events.put((None, "summary",
+                                  f"folder: {added} queued"
+                                  + (f", {skipped} skipped" if skipped
+                                     else "")))
+            except Exception as exc:
+                self._events.put((None, "summary", f"scan error: {exc}"))
         threading.Thread(target=work, daemon=True).start()
 
     def _poll(self):

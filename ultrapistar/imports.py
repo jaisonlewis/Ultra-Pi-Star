@@ -34,10 +34,82 @@ def _song_id(db, artist: str, title: str, edition: str = "") -> int:
         (artist, title, edition))[0]["id"]
 
 
-def _entry_exists(db, provider: str, source_id: str) -> bool:
-    return bool(db.query(
-        "SELECT 1 FROM media_entry WHERE provider=? AND source_id=?",
-        (provider, source_id)))
+def _entry_row(db, provider: str, source_id: str):
+    rows = db.query(
+        "SELECT id, song_id, local_path, inst_path FROM media_entry"
+        " WHERE provider=? AND source_id=?", (provider, source_id))
+    return rows[0] if rows else None
+
+
+def _attach_chart(ctx, rec: dict, base: Path, song_id: int,
+                  entry_id: int) -> bool:
+    """Copy the shipped .upsong into chart-library/generated and bind it
+    to this entry, superseding any prior generated chart. A byte-identical
+    chart already attached counts as no change."""
+    cfg = ctx["config"]
+    chart_rel = rec.get("chart") or ""
+    chart_src = base / chart_rel if chart_rel else None
+    if not (chart_src and chart_src.is_file()):
+        return False
+    db = ctx["db"]
+    shipped = chart_src.read_bytes()
+    for c in db.query(
+            "SELECT id, file_path FROM chart WHERE media_entry_id=?"
+            " AND source_repo='generated'", (entry_id,)):
+        old = Path(c["file_path"])
+        if old.is_file() and old.read_bytes() == shipped:
+            if len(db.query(
+                    "SELECT id FROM chart WHERE media_entry_id=? AND"
+                    " source_repo='generated'", (entry_id,))) == 1:
+                return False                 # same chart, already bound
+        old.unlink(missing_ok=True)
+        db.execute("DELETE FROM chart WHERE id=?", (c["id"],))
+    safe = re.sub(r"[^A-Za-z0-9 _-]+", "",
+                  f"{rec.get('artist','')} - {rec.get('title','')}")[:80]
+    d = Path(cfg.chart_library_dir) / "generated"
+    d.mkdir(parents=True, exist_ok=True)
+    dest = d / f"{safe} [{entry_id}].upsong"
+    shutil.copyfile(chart_src, dest)
+    ctx["catalog"].attach_chart(
+        song_id, dest, media_entry_id=entry_id,
+        source_repo="generated", confidence=0.4, verified=True,
+        license_note="station-generated chart")
+    return True
+
+
+def _update_entry(ctx, rec: dict, base: Path, row: dict) -> bool:
+    """A bundle for an entry the catalog already has — the station
+    reprocessed existing media. Sidecars land on the WRITE root (the
+    media may live on a nearly-full read fallback like the SD card),
+    inst_path points at the shipped karaoke track, and the shipped
+    chart supersedes any prior generated one."""
+    db, cfg = ctx["db"], ctx["config"]
+    entry_id, song_id = row["id"], row["song_id"]
+    local = rec.get("local_path") or row["local_path"] or ""
+    if not local or not cfg.media_path(local).exists():
+        return False                      # nothing to update against
+    stem = Path(local).stem
+    wroot = Path(cfg.media_dir)
+    landed = False
+    for extra in base.glob(stem + ".*"):
+        if not extra.is_file() or extra.name == Path(local).name:
+            continue                      # the media itself stays put
+        dest = wroot / extra.name
+        if not dest.exists():
+            try:
+                shutil.move(str(extra), dest)
+            except OSError:
+                continue
+        landed = True
+    inst = rec.get("inst_path") or ""
+    if (inst and inst != row["inst_path"]
+            and cfg.media_path(inst).exists()):
+        db.execute("UPDATE media_entry SET inst_path=? WHERE id=?",
+                   (inst, entry_id))
+        landed = True
+    if _attach_chart(ctx, rec, base, song_id, entry_id):
+        landed = True
+    return landed
 
 
 def _register_song(ctx, rec: dict, base: Path) -> bool:
@@ -91,25 +163,15 @@ def _register_song(ctx, rec: dict, base: Path) -> bool:
         ctx["db"].execute(
             "UPDATE media_entry SET inst_path=? WHERE id=?",
             (inst, entry_id))
-    chart_rel = rec.get("chart") or ""
-    chart_src = base / chart_rel if chart_rel else None
-    if chart_src and chart_src.is_file():
-        safe = re.sub(r"[^A-Za-z0-9 _-]+", "",
-                      f"{rec.get('artist','')} - {rec.get('title','')}")[:80]
-        d = Path(cfg.chart_library_dir) / "generated"
-        d.mkdir(parents=True, exist_ok=True)
-        dest = d / f"{safe} [{entry_id}].upsong"
-        shutil.copyfile(chart_src, dest)
-        ctx["catalog"].attach_chart(
-            song_id, dest, media_entry_id=entry_id,
-            source_repo="generated", confidence=0.4, verified=True,
-            license_note="station-generated chart")
+    _attach_chart(ctx, rec, base, song_id, entry_id)
     return True
 
 
 def import_manifest(ctx, manifest_path: Path) -> dict:
-    """Register every song in one manifest.json. Returns counts."""
-    out = {"added": 0, "skipped": 0, "missing": 0}
+    """Register every song in one manifest.json. Returns counts —
+    ``updated`` covers bundles that enrich an already-known entry
+    (a station reprocess of media the Pi already had)."""
+    out = {"added": 0, "updated": 0, "skipped": 0, "missing": 0}
     try:
         doc = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -117,9 +179,16 @@ def import_manifest(ctx, manifest_path: Path) -> dict:
         return out
     base = Path(manifest_path).parent
     for rec in doc.get("songs") or []:
-        if _entry_exists(ctx["db"], rec.get("provider") or "local",
-                         rec.get("source_id") or ""):
-            out["skipped"] += 1
+        row = _entry_row(ctx["db"], rec.get("provider") or "local",
+                         rec.get("source_id") or "")
+        if row is not None:
+            try:
+                out["updated" if _update_entry(ctx, rec, base, row)
+                    else "skipped"] += 1
+            except Exception as exc:
+                log.warning("import: update %s failed: %s",
+                            rec.get("title"), exc)
+                out["skipped"] += 1
             continue
         try:
             if _register_song(ctx, rec, base):
