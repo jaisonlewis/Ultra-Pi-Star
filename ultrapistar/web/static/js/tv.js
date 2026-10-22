@@ -35,6 +35,10 @@ let trackNames = { P1: "P1", P2: "P2" };
 let laneMeta = null;      // {beat_ms, gap_ms, offset_ms, warp:[[beat,off]]}
 let hitMarks = {};        // {track: {noteKey: litThroughMs}} — notes already sung
 let sparks = [];          // hit particles {x_ms, tone, track, born}
+let burstDone = new Set(); // noteKeys whose completion ring already fired
+let chipMap = {};          // track -> persistent score chip elements
+let prevStreak = {};       // track -> streak last frame (milestone detect)
+let scoreTween = 0;        // rAF id while score digits are animating
 let currentItemId = null;   // ignore full re-pushes for the same song
 let waitingEntryId = null;  // entry on the "Preparing…" screen — stage updates target it
 
@@ -96,6 +100,10 @@ function setLaneData(lyr) {
     offset_ms: lyr.offset_ms || 0, warp: lyr.warp || [],
   } : null;
   hitMarks = {};
+  sungTrails = {};
+  burstDone = new Set();
+  chipMap = {}; prevStreak = {};
+  $("#score-strip").innerHTML = "";
   resetLyrics();
 }
 
@@ -374,6 +382,13 @@ function renderLane(tMs) {
           ctx.shadowBlur = 0;
         }
       }
+      // note fully sung — one-shot expanding ring at its tail
+      if (lit >= n.end_ms && !burstDone.has(noteKey(n))) {
+        burstDone.add(noteKey(n));
+        sparks.push({ ring: 1, x: Math.min(x(n.end_ms), W - 6),
+                      y: ny + rowH / 2, col: golden ? "#ffd24d" : color,
+                      born: performance.now() });
+      }
     });
 
     // sung-tone trail — soft wide underlay + bright core, joined
@@ -433,8 +448,19 @@ function renderLane(tMs) {
 
   // sparks drift up-right and fade — game juice, cheap to draw
   const nowPerf = performance.now();
-  sparks = sparks.filter((p) => nowPerf - p.born < 420);
+  sparks = sparks.filter((p) => nowPerf - p.born < (p.ring ? 520 : 420));
   for (const p of sparks) {
+    if (p.ring) {          // note-complete ring — expands and fades
+      const age = (nowPerf - p.born) / 520;
+      ctx.globalAlpha = (1 - age) * .85;
+      ctx.strokeStyle = p.col;
+      ctx.lineWidth = Math.max(1, 4 * (1 - age));
+      ctx.shadowColor = p.col; ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 8 + age * 46, 0, Math.PI * 2);
+      ctx.stroke();
+      continue;
+    }
     const age = (nowPerf - p.born) / 420;
     ctx.globalAlpha = (1 - age) * .9;
     ctx.fillStyle = age < .5 ? "#fff" : p.col;
@@ -458,34 +484,89 @@ function renderLane(tMs) {
   ctx.shadowBlur = 0; ctx.lineWidth = 1;
 }
 
+/* "+N" point floater rising off a score chip — feels like points land */
+function floatPts(chip, d) {
+  const f = document.createElement("span");
+  f.className = "pts-float";
+  f.textContent = `+${d}`;
+  chip.appendChild(f);
+  setTimeout(() => f.remove(), 1400);
+}
+
+/* digits ease toward the new total instead of snapping */
+function tickScores() {
+  let running = false;
+  for (const t in chipMap) {
+    const c = chipMap[t];
+    if (c.shown !== c.target) {
+      c.shown += (c.target - c.shown) * .22;
+      if (Math.abs(c.target - c.shown) < .6) c.shown = c.target;
+      c.ptsEl.textContent = String(Math.round(c.shown)).padStart(4, "0");
+      if (c.shown !== c.target) running = true;
+    }
+  }
+  scoreTween = running ? requestAnimationFrame(tickScores) : 0;
+}
+
+/* big streak milestones get their own center-stage pop */
+function milestonePop(text) {
+  const el = document.createElement("div");
+  el.className = "rating-pop r6 streak-pop";
+  el.textContent = text;
+  $("#player").appendChild(el);
+  setTimeout(() => el.remove(), 2200);
+}
+
 function renderScores() {
   const strip = $("#score-strip");
-  strip.innerHTML = "";
+  for (const track of Object.keys(chipMap)) {
+    if (liveScores[track]) continue;
+    chipMap[track].chip.remove(); chipMap[track].badge.remove();
+    delete chipMap[track];
+  }
   Object.keys(liveScores).forEach((track) => {
     const p = liveScores[track];
     const c = trackColors[track] || "#fff";
-    const chip = document.createElement("span");
-    chip.className = "score-chip";
-    chip.style.borderColor = c;
-    chip.innerHTML =
-      `<span class="sc-dot" style="background:${c}"></span>` +
-      `<span class="sc-name">${trackNames[track] || track}</span>` +
-      `<span class="sc-pts" style="color:${c}">` +
-      `${String(p.score).padStart(4, "0")}</span>`;
-    strip.appendChild(chip);
-    if (p.streak >= 3) {
-      const st = document.createElement("span");
-      st.className = "streak-badge" + (p.streak >= 10 ? " hot" : "");
-      st.textContent = `×${p.streak}`;
-      strip.appendChild(st);
+    let e = chipMap[track];
+    if (!e) {
+      const chip = document.createElement("span");
+      chip.className = "score-chip";
+      chip.style.borderColor = c;
+      chip.innerHTML =
+        `<span class="sc-dot" style="background:${c}"></span>` +
+        `<span class="sc-name">${trackNames[track] || track}</span>` +
+        `<span class="sc-pts" style="color:${c}">0000</span>`;
+      strip.appendChild(chip);
+      const badge = document.createElement("span");
+      badge.className = "streak-badge hidden";
+      strip.appendChild(badge);
+      e = chipMap[track] = { chip, badge, shown: 0, target: 0,
+                             ptsEl: chip.querySelector(".sc-pts") };
     }
+    const delta = p.score - e.target;
+    e.target = p.score;
+    if (delta >= 40) floatPts(e.chip, delta);
+    if (!scoreTween && e.shown !== e.target)
+      scoreTween = requestAnimationFrame(tickScores);
+
+    const st = p.streak || 0;
+    const prev = prevStreak[track] || 0;
+    prevStreak[track] = st;
+    e.badge.classList.toggle("hidden", st < 3);
+    if (st >= 3) {
+      e.badge.textContent = `×${st}`;
+      e.badge.classList.toggle("hot", st >= 10);
+    }
+    for (const m of [5, 10, 25, 50, 100])
+      if (prev < m && st >= m) milestonePop(`×${m} STREAK`);
   });
-  if (!micLive) {
-    const warn = document.createElement("span");
+  let warn = strip.querySelector(".video-only");
+  if (!micLive && !warn) {
+    warn = document.createElement("span");
     warn.className = "badge video-only";
     warn.textContent = "no mic";
     strip.appendChild(warn);
-  }
+  } else if (micLive && warn) warn.remove();
 }
 
 socket.on("sing:update", (u) => {
@@ -509,6 +590,12 @@ socket.on("sing:line", (ev) => {
   el.textContent = perfect ? "PERFECT LINE" : (RATINGS[ev.rating] || "");
   $("#player").appendChild(el);
   setTimeout(() => el.remove(), 2200);
+  if (perfect) {   // full-screen gold bloom — the big payoff moment
+    const fl = document.createElement("div");
+    fl.className = "perfect-flash";
+    $("#player").appendChild(fl);
+    setTimeout(() => fl.remove(), 800);
+  }
 });
 
 socket.on("sing:autosync", (res) => {
@@ -517,15 +604,93 @@ socket.on("sing:autosync", (res) => {
   toast(`Lyrics auto-synced ${res.delta_ms > 0 ? "+" : ""}${res.delta_ms} ms${how}`);
 });
 
+/* results-screen confetti — one-shot particle burst on #fx */
+function fxConfetti() {
+  const cv = $("#fx");
+  if (!cv) return;
+  cv.classList.remove("hidden");
+  const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const cols = ["#ffd24d", "#ff6ec7", "#5ad27e", "#7ea4ff",
+                "#ff9d4d", "#ffffff"];
+  const parts = [];
+  for (let i = 0; i < 110; i++) {
+    parts.push({
+      x: innerWidth / 2 + (Math.random() - .5) * innerWidth * .34,
+      y: innerHeight * .4,
+      vx: (Math.random() - .5) * 900,
+      vy: -280 - Math.random() * 720,
+      w: 5 + Math.random() * 7, h: 3 + Math.random() * 5,
+      rot: Math.random() * Math.PI, vr: (Math.random() - .5) * 10,
+      col: cols[(Math.random() * cols.length) | 0],
+    });
+  }
+  const t0 = performance.now();
+  let last = t0;
+  const draw = (now) => {
+    const dt = Math.min(.05, (now - last) / 1000); last = now;
+    ctx.clearRect(0, 0, innerWidth, innerHeight);
+    for (const p of parts) {
+      p.vy += 1400 * dt; p.vx *= (1 - 1.6 * dt);
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      p.rot += p.vr * dt;
+      ctx.save();
+      ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      ctx.globalAlpha = Math.max(0, 1 - (now - t0) / 3200);
+      ctx.fillStyle = p.col;
+      ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+      ctx.restore();
+    }
+    if (now - t0 < 3400 && !cv.classList.contains("hidden"))
+      requestAnimationFrame(draw);
+    else cv.classList.add("hidden");
+  };
+  requestAnimationFrame(draw);
+}
+
 socket.on("sing:final", (res) => {
   const box = $("#final-score");
   box.classList.remove("hidden");
-  box.innerHTML = "<h2>Song score</h2>" +
-    Object.entries(res.tracks).map(([t, r]) =>
-      `<p><b>${t}</b>: ${r.score} <span class="muted">(${r.hits}/${r.notes} notes, ` +
-      `${r.perfect} perfect, best streak ×${r.max_streak || 0})</span></p>`
-    ).join("");
-  setTimeout(() => box.classList.add("hidden"), 12000);
+  const tracks = Object.entries(res.tracks || {});
+  const winner = tracks.length > 1
+    ? tracks.reduce((a, b) => (b[1].score > a[1].score ? b : a))[0]
+    : null;
+  box.innerHTML = '<h2 class="fs-title">Results</h2><div class="fs-rows">' +
+    tracks.map(([t, r]) => {
+      const acc = r.notes ? r.hits / r.notes : 0;
+      const grade = acc >= .9 ? "S" : acc >= .8 ? "A" :
+                    acc >= .65 ? "B" : acc >= .45 ? "C" : "D";
+      const win = t === winner;
+      return `<div class="fs-row${win ? " win" : ""}">` +
+        `<span class="fs-grade g${grade}">${grade}</span>` +
+        `<span class="fs-name" style="color:${trackColors[t] || "#fff"}">` +
+        `${trackNames[t] || t}` +
+        (win ? '<i class="fs-winner">winner</i>' : "") + `</span>` +
+        `<span class="fs-score" data-target="${r.score | 0}">0</span>` +
+        `<span class="fs-sub">${r.hits}/${r.notes} hit · ` +
+        `${r.perfect} perfect · best ×${r.max_streak || 0}</span>` +
+        `</div>`;
+    }).join("") + "</div>";
+  // staggered count-up — winner counts last so it lands on the reveal
+  const els = box.querySelectorAll(".fs-score");
+  const t0 = performance.now();
+  const step = (now) => {
+    let running = false;
+    els.forEach((el, i) => {
+      const k = Math.min(1, Math.max(0, (now - t0 - i * 350) / 1500));
+      el.textContent =
+        Math.round((+el.dataset.target) * (1 - Math.pow(1 - k, 3)))
+          .toLocaleString();
+      if (k < 1) running = true;
+    });
+    if (running && !box.classList.contains("hidden"))
+      requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+  fxConfetti();
+  setTimeout(() => box.classList.add("hidden"), 14000);
 });
 
 function preSong(payload) {

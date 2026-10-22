@@ -119,10 +119,31 @@ dialog::backdrop { background: #000b; }
   padding: .15em .6em; border-radius: 999px; color: #ffd24d;
   border: 1px solid #ffd24d66; background: #ffd24d14;
   text-shadow: 0 1px 6px #000; }
+.streak-badge.hidden { display: none; }
 .streak-badge.hot { color: #fff; background: #e0801444;
   border-color: #ffd24d; box-shadow: 0 0 18px #ffb63c55;
   animation: streakpulse 1s ease-in-out infinite alternate; }
 @keyframes streakpulse { from { transform: scale(1); } to { transform: scale(1.12); } }
+.score-chip { position: relative; }
+.pts-float { position: absolute; left: 50%; bottom: 100%; z-index: 5;
+  transform: translateX(-50%); font-size: 1.05rem; font-weight: 800;
+  color: #ffd24d; text-shadow: 0 2px 8px #000; pointer-events: none;
+  animation: ptsfloat 1.3s ease-out forwards; }
+@keyframes ptsfloat {
+  0% { opacity: 0; transform: translate(-50%, 6px) scale(.7); }
+  15% { opacity: 1; transform: translate(-50%, 0) scale(1.1); }
+  100% { opacity: 0; transform: translate(-50%, -34px) scale(1); } }
+.streak-pop { top: 30vh; font-size: 2.2rem; color: #ffd24d;
+  text-shadow: 0 0 26px #ffd24d66, 0 4px 24px #000; }
+.perfect-flash { position: absolute; inset: 0; z-index: 4;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 50% 40%,
+    #ffd24d38, transparent 62%);
+  animation: pflash .75s ease-out forwards; }
+@keyframes pflash { 0% { opacity: 0; } 22% { opacity: 1; }
+  100% { opacity: 0; } }
+.fx { position: absolute; inset: 0; width: 100%; height: 100%;
+  z-index: 6; pointer-events: none; }
 #song-progress { position: absolute; left: 0; right: 0; bottom: 0;
   height: 5px; background: #ffffff14; }
 #song-progress-fill { height: 100%; width: 0;
@@ -135,13 +156,44 @@ dialog::backdrop { background: #000b; }
   80% { opacity: 1; }
   100% { opacity: 0; transform: translateX(-50%) translateY(-30px); }
 }
-.final-score { position: absolute; top: 20vh; left: 50%;
+.final-score { position: absolute; top: 16vh; left: 50%;
   transform: translateX(-50%); background: var(--panel);
   border: 1px solid #333a4d; border-radius: var(--radius);
   padding: 2rem 3rem; text-align: center; z-index: 30;
-  box-shadow: 0 8px 40px #000c; }
-.final-score h2 { margin: 0 0 1rem; color: var(--accent); }
-.final-score p { font-size: 1.4rem; margin: .4rem 0; }
+  min-width: 36rem; box-shadow: 0 8px 40px #000c;
+  animation: fsin .5s ease-out both; }
+.final-score .fs-title { font-size: 2vw; letter-spacing: .3em;
+  text-transform: uppercase; color: var(--accent); margin: 0 0 1rem; }
+.fs-row { display: grid; grid-template-columns: auto 1fr auto;
+  gap: 0 1.4rem; align-items: center; text-align: left;
+  padding: .8rem 0; border-top: 1px solid #ffffff14;
+  animation: fsin .5s .2s ease-out both; }
+.fs-row.win .fs-score { color: #ffd24d;
+  text-shadow: 0 0 22px #ffd24d66; }
+@keyframes fsin {
+  from { opacity: 0; transform: translateY(14px) scale(.96); }
+  to { opacity: 1; transform: none; } }
+.fs-grade { grid-row: 1 / 3; font-size: 3.4rem; font-weight: 900;
+  width: 1.4em; text-align: center;
+  animation: gstamp .5s .55s cubic-bezier(.2, 2.4, .4, 1) both; }
+@keyframes gstamp {
+  0% { opacity: 0; transform: scale(2.6) rotate(-16deg); }
+  60% { opacity: 1; transform: scale(.92) rotate(3deg); }
+  100% { transform: scale(1) rotate(-3deg); } }
+.fs-grade.gS { color: #ffd24d; text-shadow: 0 0 26px #ffd24d88; }
+.fs-grade.gA { color: #5ad27e; }
+.fs-grade.gB { color: #7ea4ff; }
+.fs-grade.gC { color: #ff9d4d; }
+.fs-grade.gD { color: #ff5a5a; }
+.fs-name { font-size: 1.6rem; font-weight: 800; }
+.fs-winner { font-style: normal; font-size: .78rem; font-weight: 800;
+  text-transform: uppercase; letter-spacing: .1em; color: #ffd24d;
+  border: 1px solid #ffd24d88; border-radius: 999px;
+  padding: .15em .7em; margin-left: .8em; vertical-align: middle; }
+.fs-score { grid-row: 1 / 3; grid-column: 3; align-self: center;
+  font-size: 2.6rem; font-weight: 900; color: #fff;
+  font-variant-numeric: tabular-nums; }
+.fs-sub { color: var(--muted); font-size: .95rem; }
 dialog label { display: block; margin: .8rem 0 .2rem; }
 dialog menu { padding: 0; display: flex; justify-content: flex-end; gap: .6rem; }
 .host-queue li { flex-wrap: wrap; }
