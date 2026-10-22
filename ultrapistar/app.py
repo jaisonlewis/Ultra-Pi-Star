@@ -160,6 +160,16 @@ def create_app(config: Config | None = None, seed: bool = True,
     except Exception as exc:
         app.logger.warning("station import scan failed: %s", exc)
 
+    # 'Artist - Title/' folders per song so a USB media root stays
+    # browsable — idempotent rename sweep, safe to run every boot
+    try:
+        from .mediastore import organize
+        _org = organize({"config": config, "db": db, "queue": queue})
+        if _org["moved"]:
+            app.logger.info("media organize: %s", _org)
+    except Exception as exc:
+        app.logger.warning("media organize failed: %s", exc)
+
     app.extensions["ups"] = {
         # "app" lets worker threads use app.logger/app_context without
         # current_app, which raises outside a request context

@@ -434,6 +434,15 @@ def manage_repair_all():
     return jsonify({"ok": True, "running": True})
 
 
+@bp.post("/manage/organize")
+@host_required
+def manage_organize():
+    """Re-run the media organizer — every cataloged song's files get
+    moved into their 'Artist - Title/' folder (idempotent)."""
+    from ..mediastore import organize
+    return jsonify({"ok": True, **organize(_ctx())})
+
+
 @bp.post("/manage/import-scan")
 @host_required
 def manage_import_scan():

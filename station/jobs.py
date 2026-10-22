@@ -97,12 +97,15 @@ class Station:
             ids.append(self.add(e))
         return title, ids, len(skipped)
 
-    def add_folder(self, folder: Path) -> tuple[int, int]:
+    def add_folder(self, folder: Path,
+                   include_charted: bool = False) -> tuple[int, int]:
         """Enqueue every media file in a staging folder that still needs
         processing. A ``pi-catalog.json`` (exported from the Pi's
         /api/manage/songs) supplies catalog metadata and tells us which
         entries already carry a verified chart; bare ``yt-<id>`` files
-        self-describe. Returns (added, skipped)."""
+        self-describe. ``include_charted`` re-processes even charted
+        entries — a quality upgrade pass over the whole library.
+        Returns (added, skipped)."""
         import json
         from .bundle import known_ids
         folder = Path(folder)
@@ -124,7 +127,7 @@ class Station:
             row = cat.get(p.name)
             if cat and row is None:
                 continue                    # orphan fragment
-            if row and row.get("scored"):
+            if row and row.get("scored") and not include_charted:
                 skipped += 1
                 continue                    # verified chart already
             rec = _folder_rec(p, row)
