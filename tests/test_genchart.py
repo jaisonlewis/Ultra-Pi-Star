@@ -300,3 +300,62 @@ def test_merged_words_keep_spacing():
                                    ("want", 1050, 1400),
                                    ("ride", 1400, 1900)])
     assert spans[0][0] == "i want"
+
+
+def _runs_curve(runs_s, dur_s, hz=220.0):
+    """RMVPE-like curve voiced only inside (start,end) second windows."""
+    t = np.arange(0, dur_s, 0.01)
+    f0 = np.zeros_like(t); conf = np.zeros_like(t)
+    for a, b in runs_s:
+        m = (t >= a) & (t <= b)
+        f0[m] = hz; conf[m] = 0.9
+    return t, f0, conf
+
+
+def test_held_tail_extends_to_voiced_run_end():
+    """A final syllable held past the LRC-implied end keeps sounding —
+    the line ends near the pitch run's end, not last-word + 400ms."""
+    rec = {"synced": [(10000, "hold the note right there"),
+                      (18000, "second line comes after it"),
+                      (26000, "third line finishes the song")],
+           "plain": []}
+    asr = [("hold", 10500), ("the", 10900), ("note", 11300),
+           ("right", 11700), ("there", 12100),
+           ("second", 18300), ("line", 18700), ("comes", 19100),
+           ("after", 19500), ("it", 19900),
+           ("third", 26300), ("line", 26700), ("finishes", 27100),
+           ("the", 27500), ("song", 27900)]
+    asr += [(f"pad{i}", 30000 + i * 400) for i in range(6)]
+    curve = _runs_curve([(10.2, 16.8), (18.2, 20.5), (26.2, 28.6),
+                         (29.8, 32.5)], dur_s=34)
+    chart = genchart.generate("A", "B", rec, asr, curve)
+    assert chart is not None
+    notes = chart.tracks["P1"]; bm = 15000 / chart.bpm
+    line1 = [n for n in notes if n.start * bm < 17500]
+    end1 = (line1[-1].start + line1[-1].length) * bm
+    # before the fix the last word ended ~12100+400; the run says the
+    # voice holds to 16800 — the line must not die mid-syllable
+    assert end1 > 15000
+
+
+def test_onset_snaps_back_to_run_start():
+    """Whisper hears only the tail of a phrase, but the pitch run shows
+    singing began earlier — the line onset covers the run start and
+    leading unheard words spread across it."""
+    rec = {"synced": [(10000, "i bleach the sky every night"),
+                      (20000, "loaded on wrong and further out"),
+                      (28000, "closing line brings it all home")],
+           "plain": []}
+    asr = [("sky", 12500), ("every", 12900), ("night", 13300),
+           ("loaded", 20500), ("on", 20900), ("wrong", 21300),
+           ("and", 21700), ("further", 22100), ("out", 22500),
+           ("closing", 28500), ("line", 28900), ("brings", 29300),
+           ("it", 29700), ("all", 30100), ("home", 30500)]
+    asr += [(f"pad{i}", 32000 + i * 400) for i in range(6)]
+    curve = _runs_curve([(11.0, 14.5), (20.2, 23.0), (28.2, 31.0),
+                         (32.0, 34.0)], dur_s=35)
+    chart = genchart.generate("A", "B", rec, asr, curve)
+    assert chart is not None
+    bm = 15000 / chart.bpm
+    first = chart.tracks["P1"][0]
+    assert first.start * bm <= 11500          # at the 11000 run start

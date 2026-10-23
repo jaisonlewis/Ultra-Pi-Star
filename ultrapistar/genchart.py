@@ -61,7 +61,11 @@ def _line_word_spans(line_text: str, span: dict,
             frac = (pos - prev) / (nxt - prev)
             times[pos] = times[prev] + frac * (times[nxt] - times[prev])
         elif nxt is not None:
-            times[pos] = times[nxt] - 350 * (nxt - pos)
+            # spread leading words from the span onset — a run-derived
+            # onset is the true phrase start, not 350ms per word back
+            lo_t = span["onset_ms"]
+            times[pos] = max(
+                lo_t, times[nxt] - (times[nxt] - lo_t) * (nxt - pos) / nxt)
         elif prev is not None:
             times[pos] = times[prev] + 350 * (pos - prev)
         else:
@@ -72,12 +76,20 @@ def _line_word_spans(line_text: str, span: dict,
                                    span["onset_ms"] + 50)
     starts = np.maximum.accumulate(
         [min(max(times[i], lo), hi) for i in range(len(words))]).tolist()
-    ends = starts[1:] + [min(starts[-1] + 400, span["end_ms"])]
+    # last syllable fills to the line's end — held notes outrun a flat
+    # per-word estimate, and the span end is now run-derived media truth
+    ends = starts[1:] + [max(starts[-1] + 100, span["end_ms"])]
     return [(w, s, e) for w, s, e in zip(words, starts, ends)]
 
 
+def _run_end(t: float, runs) -> float:
+    """End of the voiced run containing t, else t itself."""
+    return next((b for a, b in runs if a - 300 <= t <= b), t)
+
+
 def _asr_lines(asr: list[tuple[str, float]],
-               gap_ms: float = 1300) -> tuple[list[str], dict]:
+               gap_ms: float = 1300,
+               runs: list[tuple[float, float]] = ()) -> tuple[list[str], dict]:
     """No online lyrics → phrase lines from ASR word-pause gaps.
 
     A sung line almost always ends in a breath; consecutive words more
@@ -90,7 +102,8 @@ def _asr_lines(asr: list[tuple[str, float]],
         if idxs and t - asr[idxs[-1]][1] > gap_ms:
             texts.append(" ".join(x[0] for x in cur))
             li = len(texts) - 1
-            spans[li] = {"onset_ms": cur[0][1], "end_ms": cur[-1][1],
+            spans[li] = {"onset_ms": cur[0][1],
+                         "end_ms": _run_end(cur[-1][1], runs),
                          "cov": 1.0,
                          "words": {p: a for p, a in enumerate(idxs)}}
             cur, idxs = [], []
@@ -99,7 +112,8 @@ def _asr_lines(asr: list[tuple[str, float]],
     if cur:
         texts.append(" ".join(x[0] for x in cur))
         li = len(texts) - 1
-        spans[li] = {"onset_ms": cur[0][1], "end_ms": cur[-1][1],
+        spans[li] = {"onset_ms": cur[0][1],
+                     "end_ms": _run_end(cur[-1][1], runs),
                      "cov": 1.0,
                      "words": {p: a for p, a in enumerate(idxs)}}
     # absurd micro-lines (single stray word between gaps) merge forward
@@ -286,27 +300,45 @@ def _onset_shift(lrc_ms, heard_ms, deltas) -> float | None:
 
 
 def _sung_spans(spans, texts, times, shift, heard_ms,
-                asr: list[tuple[str, float]]) -> None:
+                asr: list[tuple[str, float]],
+                runs: list[tuple[float, float]] = ()) -> None:
     """LRC+shift predicts each line; the onset snaps to the nearest
     heard word within ±3 s (monotone — two lines can't share a phrase).
     Crowd-timed LRC is usually within ~0.4 s of the media, and a
     bigger miss means the reference diverged there, so the real phrase
     start wins. Lines with nothing heard anywhere near stay unmapped —
     an intro, skit, or cut section shows no text rather than drifted
-    text. Word anchors inside the surviving window are kept."""
+    text. Word anchors inside the surviving window are kept.
+
+    Voiced runs (RMVPE) beat raw word times twice over: a run's START
+    is the phrase onset even when whisper's first word lands mid-phrase,
+    and a run's END is where the last syllable stops — LRC line spacing
+    can't see either."""
     ons = np.asarray(sorted(heard_ms))
+    rons = np.asarray(sorted(a for a, _ in runs))
     prev, placed, dropped = -1e9, [], []
     for li, lms in enumerate(times):
         pred = lms + shift
         cands = ons[(ons >= prev) & (np.abs(ons - pred) <= 3000)]
+        onset = None
         if len(cands):
-            onset = float(cands[np.abs(cands - pred).argmin()])
+            w = float(cands[np.abs(cands - pred).argmin()])
+            # the anchor word belongs to a voiced run — that run's
+            # START is the phrase onset; whisper's first word lands
+            # mid-phrase when it lags or misses the first syllable
+            hold = [a for a, b in runs
+                    if a >= prev and a <= w + 300 and b >= w - 50]
+            onset = hold[0] if hold else w
         else:
-            near = ons[(ons >= prev) & (np.abs(ons - pred) <= 4000)]
-            if not len(near):
-                dropped.append((li, pred, spans.pop(li, None)))
-                continue
-            onset = float(pred)
+            rc = rons[(rons >= prev) & (np.abs(rons - pred) <= 3000)]
+            if len(rc):
+                onset = float(rc[np.abs(rc - pred).argmin()])
+            else:
+                near = ons[(ons >= prev) & (np.abs(ons - pred) <= 4000)]
+                if not len(near):
+                    dropped.append((li, pred, spans.pop(li, None)))
+                    continue
+                onset = float(pred)
         prev = onset + 100
         placed.append((li, onset))
     # ASR gaps inside a confirmed region aren't cuts — the sung region
@@ -330,7 +362,7 @@ def _sung_spans(spans, texts, times, shift, heard_ms,
                    if li + 1 < len(times) else 6000)
         nxt = min((o for _, o in placed if o > onset),
                   default=onset + lrc_dur)
-        end = min(max(onset + 800, nxt - 100), onset + lrc_dur + 1500)
+        end = _line_end(onset, nxt, lrc_dur, runs)
         sp = spans.get(li) or {}
         words = {p: a for p, a in sp.get("words", {}).items()
                  if onset - 300 <= asr[a][1] < end}
@@ -399,18 +431,19 @@ def _phrase_map(times: list[int],
     return [onsets[k] for k in reversed(path)]
 
 
-def _phrase_onsets(curve) -> list[float]:
-    """Voiced-segment starts (ms) from the RMVPE pitch curve.
+def _voiced_runs(curve) -> list[tuple[float, float]]:
+    """(start,end) voiced-phrase runs (ms) from the RMVPE pitch curve.
 
     ASR onsets fail when the transcript is hallucination — needle drops
     invented words into instrumental gaps, corrupting the onset map.
     Pitch confidence can't be fooled the same way: a sung phrase is a
-    voiced run, whatever the words were."""
+    voiced run, whatever the words were. The run's END matters as much
+    as its start — it is where the last syllable actually stops."""
     if not curve:
         return []
     t, f0, conf = (np.asarray(x, dtype=float) for x in curve)
     voiced = (f0 > 0) & (conf >= 0.3)
-    onsets, run_start, last_v = [], None, None
+    runs, run_start, last_v = [], None, None
     for i, tt in enumerate(t):
         if voiced[i]:
             if run_start is None:
@@ -418,11 +451,32 @@ def _phrase_onsets(curve) -> list[float]:
             last_v = float(tt)
         elif run_start is not None and tt - last_v > 0.25:
             if last_v - run_start > 0.5:
-                onsets.append(run_start * 1000)
+                runs.append((run_start * 1000, last_v * 1000))
             run_start = None
     if run_start is not None and last_v - run_start > 0.5:
-        onsets.append(run_start * 1000)
-    return onsets
+        runs.append((run_start * 1000, last_v * 1000))
+    return runs
+
+
+def _phrase_onsets(curve) -> list[float]:
+    return [a for a, _ in _voiced_runs(curve)]
+
+
+def _line_end(onset: float, nxt: float, ref_dur: float,
+              runs: list[tuple[float, float]]) -> float:
+    """A lyric line's display end (ms).
+
+    Base rule: just before the next line starts, bounded by reference
+    spacing. But a sung phrase's true end is where voicing stops — LRC
+    spacing under-cuts held notes and a wrong next-onset truncates
+    mid-syllable, so stretch to the last voiced run overlapping the
+    window (still never crossing the next line's onset)."""
+    end = min(max(onset + 800, nxt - 100), onset + ref_dur + 1500)
+    rend = max((b for a, b in runs if a < nxt - 50 and b > onset),
+               default=None)
+    if rend is not None:
+        end = max(end, min(rend, nxt - 50))
+    return end
 
 
 def generate(artist: str, title: str, lyric_rec: dict | None,
@@ -439,6 +493,7 @@ def generate(artist: str, title: str, lyric_rec: dict | None,
     """
     if len(asr) < 20:
         return None
+    runs = _voiced_runs(pitch_curve)
     synced = (lyric_rec or {}).get("synced") or []
     plain = (lyric_rec or {}).get("plain") or []
     line_texts, spans, lyrics_kind = [], {}, None
@@ -473,7 +528,7 @@ def generate(artist: str, title: str, lyric_rec: dict | None,
                      or _lrc_shift(deltas, synced, asr)
                      if times else None)
             if shift is not None:
-                _sung_spans(spans, texts, times, shift, heard, asr)
+                _sung_spans(spans, texts, times, shift, heard, asr, runs)
                 if meta_out is not None:
                     meta_out["lrc_shift_ms"] = round(shift, 1)
             else:
@@ -491,7 +546,7 @@ def generate(artist: str, title: str, lyric_rec: dict | None,
         # failed text-matching BECAUSE it's hallucinated, so its words
         # (and where it claims they sit) can't be trusted; the pitch
         # curve only reports real singing
-        heard = _phrase_onsets(pitch_curve) or [t for _, t in asr]
+        heard = [a for a, _ in runs] or [t for _, t in asr]
         texts = [t for _, t in synced]
         mapped = _phrase_map(times, heard)
         if mapped:
@@ -500,8 +555,7 @@ def generate(artist: str, title: str, lyric_rec: dict | None,
                        if li + 1 < len(times) else 6000)
                 nxt = mapped[li + 1] if li + 1 < len(mapped) else on + dur
                 spans[li] = {"onset_ms": on,
-                             "end_ms": min(max(on + 800, nxt - 100),
-                                           on + dur + 1500),
+                             "end_ms": _line_end(on, nxt, dur, runs),
                              "words": {}, "lrc": True}
             if len(spans) >= 3:
                 line_texts, lyrics_kind = texts, "lrc"
@@ -513,7 +567,7 @@ def generate(artist: str, title: str, lyric_rec: dict | None,
         else:
             shift = _onset_shift(times, heard, [])
             if shift is not None:
-                _sung_spans(spans, texts, times, shift, heard, asr)
+                _sung_spans(spans, texts, times, shift, heard, asr, runs)
                 if len(spans) >= 3:
                     line_texts, lyrics_kind = texts, "lrc"
                     if meta_out is not None:
@@ -536,7 +590,7 @@ def generate(artist: str, title: str, lyric_rec: dict | None,
     left_idx = [i for i in range(len(asr)) if i not in used]
     if (lyrics_kind is None and len(left_idx) >= 3
             and (len(spans) < 3 or len(used) < 0.5 * len(asr))):
-        t2, s2 = _asr_lines([asr[i] for i in left_idx])
+        t2, s2 = _asr_lines([asr[i] for i in left_idx], runs=runs)
         base = len(line_texts)
         line_texts += t2
         for li, sp in s2.items():
