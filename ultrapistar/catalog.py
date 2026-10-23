@@ -132,9 +132,11 @@ class Catalog:
         )
 
     # -- reads ---------------------------------------------------------------
-    def search(self, query: str = "", limit: int = 50) -> list[dict]:
+    def search(self, query: str = "", limit: int | None = None) -> list[dict]:
         like = f"%{query.strip()}%"
-        rows = self.db.query(SEARCH_SQL + " LIMIT ?", (like, like, like, limit))
+        rows = self.db.query(
+            SEARCH_SQL + (" LIMIT ?" if limit else ""),
+            (like, like, like) + ((limit,) if limit else ()))
         tops = self.top_scores()
         for r in rows:
             r["tracks"] = json.loads(r["tracks"])
