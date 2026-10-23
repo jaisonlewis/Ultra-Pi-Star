@@ -38,6 +38,8 @@ def _cookiefile() -> str | None:
     and point UPS_COOKIES at it, or drop it next to run.py as
     data/cookies.txt."""
     for cand in (os.environ.get("UPS_COOKIES", ""),
+                 # repo-root data/ — works regardless of launch CWD
+                 str(Path(__file__).resolve().parents[2] / "data" / "cookies.txt"),
                  str(Path("data") / "cookies.txt")):
         if cand and Path(cand).is_file():
             return cand
