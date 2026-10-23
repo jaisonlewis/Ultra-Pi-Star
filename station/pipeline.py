@@ -16,7 +16,7 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 STAGES = ("downloading", "metadata", "normalizing", "separating",
-          "lyrics", "transcribing", "pitch", "chart", "done")
+          "lyrics", "transcribing", "pitch", "chart", "artwork", "done")
 
 
 def _noop(_stage: str) -> None:
@@ -126,6 +126,10 @@ def process_song(rec: dict, dest: Path, models_dir: Path,
     else:
         log.warning("no chart for %s — bundle ships media only", media)
 
+    on_stage("artwork")
+    art_rel = _fetch_art(media, artist, title,
+                         rec.get("thumbnail") or "")
+
     on_stage("done")
     return {
         "artist": artist, "title": title,
@@ -137,5 +141,38 @@ def process_song(rec: dict, dest: Path, models_dir: Path,
         "local_path": rel,
         "inst_path": inst_rel if (dest / inst_rel).exists() else "",
         "chart": (f"charts/{chart_path.name}" if chart_path else ""),
+        "art": art_rel,
         "provenance": "station",
     }
+
+
+def _fetch_art(media: Path, artist: str, title: str,
+               thumb_url: str) -> str:
+    """<stem>.jpg sidecar next to the media — survives flat roots where
+    a shared cover.jpg would collide. Chain: iTunes/Deezer → provider
+    thumbnail → video frame. Returns the rel path, or "" (never raises —
+    art is nice-to-have)."""
+    from ultrapistar.artwork import save_artwork
+    out = media.with_suffix(".jpg")
+    try:
+        if save_artwork(artist, title, out, thumb_url=thumb_url):
+            return out.name
+    except Exception:
+        pass
+    # last resort: a frame out of the video itself
+    if media.suffix.lower() in (".mp4", ".mkv", ".webm"):
+        import subprocess
+        for ts in (45, 15, 90):
+            try:
+                subprocess.run(
+                    ["ffmpeg", "-y", "-ss", str(ts), "-i", str(media),
+                     "-frames:v", "1", "-vf", "scale=600:-2",
+                     "-q:v", "4", str(out)],
+                    capture_output=True, timeout=30, check=False)
+            except Exception:
+                break
+            if out.is_file() and out.stat().st_size > 5000:
+                return out.name
+    if out.is_file() and out.stat().st_size <= 5000:
+        out.unlink(missing_ok=True)
+    return ""

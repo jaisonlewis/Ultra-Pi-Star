@@ -7,6 +7,7 @@ uses). The station writes flat into that root:
 
     <root>/yt-<id>.mp4               merged video+audio (normalized)
     <root>/yt-<id>.inst.mp4          karaoke backing (normalized)
+    <root>/yt-<id>.jpg               album art (iTunes/Deezer/thumb/frame)
     <root>/yt-<id>.vocals.wav        16k vocal stem (Pi scoring analysis)
     <root>/yt-<id>.analysis.json     pipeline evidence
     <root>/yt-<id>.mp4.normed        normalization markers

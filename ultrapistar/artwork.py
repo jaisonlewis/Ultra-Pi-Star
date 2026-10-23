@@ -83,6 +83,27 @@ def lookup_artwork(artist: str, title: str) -> str | None:
     return _itunes_art(artist, title) or _deezer_art(artist, title)
 
 
+def save_artwork(artist: str, title: str, dest: Path,
+                 thumb_url: str = "") -> bool:
+    """Fetch album art for artist/title into ``dest`` (iTunes → Deezer →
+    provider thumbnail). Returns True when a real image landed; never
+    raises — art is nice-to-have."""
+    for url in (lookup_artwork(artist, title), thumb_url):
+        if not url:
+            continue
+        try:
+            with urllib.request.urlopen(
+                    urllib.request.Request(url, headers=UA),
+                    timeout=TIMEOUT) as r:
+                img = r.read()
+            if len(img) > 5000:
+                Path(dest).write_bytes(img)
+                return True
+        except Exception:
+            continue
+    return False
+
+
 class ArtworkFetcher:
     """Caches artwork locally in the background and stores the serving
     path on the media entry."""
