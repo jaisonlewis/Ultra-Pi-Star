@@ -7,6 +7,7 @@ Downloads are for the user's own karaoke session; enable/disable with
 """
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -30,10 +31,46 @@ def video_id_from_url(text: str) -> str | None:
     return m.group(1) if m else None
 
 
+def _cookiefile() -> str | None:
+    """Netscape cookies.txt for YouTube auth — when a session is
+    bot-checked, signed-in cookies are the only way through. Export
+    once with a browser extension (e.g. 'Get cookies.txt LOCALLY')
+    and point UPS_COOKIES at it, or drop it next to run.py as
+    data/cookies.txt."""
+    for cand in (os.environ.get("UPS_COOKIES", ""),
+                 str(Path("data") / "cookies.txt")):
+        if cand and Path(cand).is_file():
+            return cand
+    return None
+
+
+def _deno_path() -> str | None:
+    """Locate a deno executable — yt-dlp needs it to solve YouTube's
+    JS challenges. PATH first, then the default per-user install dir."""
+    import shutil
+    hit = shutil.which("deno")
+    if hit:
+        return hit
+    home = Path.home() / ".deno" / "bin"
+    for name in ("deno.exe", "deno"):
+        if (home / name).is_file():
+            return str(home / name)
+    return None
+
+
 def _ydl(opts: dict):
     from yt_dlp import YoutubeDL  # imported lazily; provider is optional
     base = {"quiet": True, "no_warnings": True, "noplaylist": True}
     base.update(opts)
+    ck = _cookiefile()
+    if ck:
+        base.setdefault("cookiefile", ck)
+    deno = _deno_path()
+    if deno:
+        base.setdefault("js_runtimes", {"deno": {"path": deno}})
+        # EJS solver script is fetched on demand — required for the
+        # JS challenges YouTube serves flagged sessions
+        base.setdefault("remote_components", {"ejs:github"})
     return YoutubeDL(base)
 
 
@@ -247,7 +284,12 @@ class YouTubeProvider:
             except Exception as exc:
                 last_exc = exc
         else:
-            raise last_exc
+            msg = str(last_exc)
+            if "not a bot" in msg and not _cookiefile():
+                msg = ("YouTube bot-check — export your youtube.com "
+                       "cookies to data/cookies.txt (see yt-dlp FAQ "
+                       "'Get cookies.txt LOCALLY' extension) and retry")
+            raise RuntimeError(msg)
         found = next(dest.glob(f"{stem}.*"), None)
         if not found:
             raise RuntimeError(f"download produced no file for {entry['source_id']}")
