@@ -7,12 +7,49 @@ from __future__ import annotations
 
 import itertools
 import queue
+import re
 import threading
 import traceback
 from pathlib import Path
 
 
 _MEDIA_EXTS = (".mp4", ".mp3", ".m4a", ".webm", ".mkv")
+
+
+def _tokens(s: str) -> set:
+    return {t for t in re.sub(r"[^a-z0-9 ]+", " ", s.lower()).split()
+            if t}
+
+
+def _chan_tokens(s: str) -> set:
+    """Channel/uploader names → plausible artist tokens ("SiaVEVO" also
+    yields "sia")."""
+    toks = _tokens(s)
+    out = set(toks)
+    for t in toks:
+        for suf in ("vevo", "official", "topic", "tv"):
+            if t.endswith(suf) and len(t) > len(suf) + 2:
+                out.add(t[:-len(suf)])
+    return out
+
+
+def _is_known_song(rec: dict, pairs) -> bool:
+    """Song-level dedup for re-uploads under a different video id.
+
+    A manifest (artist, title) counts as already present when every
+    title token shows in the entry's video title AND every artist token
+    shows in the video title or the (de-VEVO'd) channel name. Deliberately
+    strict — distinct versions ("Chandelier Live") can still collide and
+    skip, which is accepted: a skipped dupe beats a doubled library."""
+    et = _tokens(rec.get("title") or "")
+    ea = _chan_tokens(rec.get("artist") or "")
+    if not et:
+        return False
+    for a, t in pairs:
+        ta, tt = _tokens(a), _tokens(t)
+        if ta and tt and tt <= et and ta <= (ea | et):
+            return True
+    return False
 
 
 def _is_source_media(p: Path) -> bool:
@@ -75,9 +112,10 @@ class Station:
         """Playlist URL → a job per track; single video → one job.
         Returns (title, job_ids). Raises on dead/unexpandable URLs."""
         from ultrapistar.providers.youtube import YouTubeProvider
-        from .bundle import known_ids
+        from . import bundle
         prov = YouTubeProvider(self.dest)
-        known = known_ids(self.dest)
+        known = bundle.known_ids(self.dest)
+        pairs = bundle.known_songs(self.dest)
         pl = prov.playlist(url)
         if pl:
             entries = pl["entries"]
@@ -91,7 +129,7 @@ class Station:
             entries, title = [entry], entry.get("title") or url
         ids, skipped = [], []
         for e in entries:
-            if e.get("source_id") in known:
+            if e.get("source_id") in known or _is_known_song(e, pairs):
                 skipped.append(e)
                 continue
             ids.append(self.add(e))
@@ -107,7 +145,7 @@ class Station:
         entries — a quality upgrade pass over the whole library.
         Returns (added, skipped)."""
         import json
-        from .bundle import known_ids
+        from . import bundle
         folder = Path(folder)
         cat = {}
         catfile = folder / "pi-catalog.json"
@@ -119,7 +157,8 @@ class Station:
                         cat[s["local_path"]] = s
             except (OSError, ValueError):
                 pass
-        known = known_ids(self.dest)
+        known = bundle.known_ids(self.dest)
+        pairs = bundle.known_songs(self.dest)
         added = skipped = 0
         for p in sorted(folder.iterdir()):
             if not _is_source_media(p):
@@ -131,7 +170,7 @@ class Station:
                 skipped += 1
                 continue                    # verified chart already
             rec = _folder_rec(p, row)
-            if rec["source_id"] in known:
+            if rec["source_id"] in known or _is_known_song(rec, pairs):
                 skipped += 1
                 continue
             self.add(rec)

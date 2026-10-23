@@ -58,6 +58,13 @@ def known_ids(root: Path) -> set:
     return {s.get("source_id") for s in load_manifest(root)["songs"]}
 
 
+def known_songs(root: Path) -> list[tuple[str, str]]:
+    """(artist, title) pairs already in the manifest — fuzzy song-level
+    dedup for re-uploads whose source_id differs."""
+    return [(s.get("artist") or "", s.get("title") or "")
+            for s in load_manifest(root)["songs"] if s.get("title")]
+
+
 def is_prepared_root(path: Path) -> bool:
     p = Path(path)
     return ((p / "ultrapistar").is_dir()
