@@ -100,9 +100,16 @@ class Station:
         self.push = push
         self.jobs: dict[int, dict] = {}
         self._q: queue.Queue = queue.Queue()
+        self._dl_q: queue.Queue = queue.Queue()
         self._ids = itertools.count(1)
         self._stop = threading.Event()
+        self._plock = threading.Lock()
         self._restore_queue()
+        # downloads are network-bound — run ahead of the GPU pipeline
+        # (which stays strictly serial) so the worker never waits on http
+        for i in range(2):
+            threading.Thread(target=self._dl_loop, daemon=True,
+                             name=f"station-dl-{i}").start()
         self._worker = threading.Thread(
             target=self._loop, daemon=True, name="station-worker")
         self._worker.start()
@@ -120,10 +127,11 @@ class Station:
             recs = [j["rec"] for j in self.jobs.values()
                     if j["status"] in ("queued", "running")]
             self.dest.mkdir(parents=True, exist_ok=True)
-            tmp = self._queue_file.with_suffix(".tmp")
-            tmp.write_text(json.dumps(recs, ensure_ascii=False),
-                           encoding="utf-8")
-            tmp.replace(self._queue_file)
+            with self._plock:
+                tmp = self._queue_file.with_suffix(".tmp")
+                tmp.write_text(json.dumps(recs, ensure_ascii=False),
+                               encoding="utf-8")
+                tmp.replace(self._queue_file)
         except OSError:
             pass                      # persistence is best-effort
 
@@ -138,13 +146,53 @@ class Station:
             jid = next(self._ids)
             job = {"id": jid, "rec": rec, "status": "queued", "stage": ""}
             self.jobs[jid] = job
+            self._route(job)
+
+    def _route(self, job: dict) -> None:
+        """YouTube jobs go through the download pool first; jobs whose
+        media is already on disk go straight to the serial pipeline."""
+        rec = job["rec"]
+        local = rec.get("local_file")
+        if local and not Path(local).exists():
+            rec.pop("local_file", None)   # interrupted download (.part)
+            rec.pop("local_path", None)
+            local = None
+        if local or rec.get("provider") != "youtube":
             self._q.put(job)
+        else:
+            self._dl_q.put(job)
+
+    def _dl_loop(self) -> None:
+        from ultrapistar.providers.youtube import YouTubeProvider
+        prov = YouTubeProvider(self.dest)
+        while not self._stop.is_set():
+            try:
+                job = self._dl_q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            try:
+                if job["status"] == "cancelled":
+                    self.on_event(job["id"], "cancelled", "")
+                    continue
+                self.on_event(job["id"], "stage", "downloading")
+                self.dest.mkdir(parents=True, exist_ok=True)
+                fname = prov.download(job["rec"], dest_dir=self.dest)
+                job["rec"]["local_file"] = str(self.dest / fname)
+                job["rec"]["local_path"] = fname
+                self._persist()   # survives restart without re-downloading
+                self._q.put(job)
+            except Exception as exc:
+                job["status"] = "failed"
+                job["error"] = str(exc)
+                self.on_event(job["id"], "failed", str(exc))
+            finally:
+                self._dl_q.task_done()
 
     def add(self, rec: dict) -> int:
         jid = next(self._ids)
         job = {"id": jid, "rec": rec, "status": "queued", "stage": ""}
         self.jobs[jid] = job
-        self._q.put(job)
+        self._route(job)
         self._persist()
         return jid
 
@@ -251,6 +299,8 @@ class Station:
                 rec = bundle_rec = process_song(
                     job["rec"], self.dest, self.models_dir,
                     on_stage=stage)
+                if job["status"] == "cancelled":
+                    raise _Cancelled()
                 job["status"] = "done"
                 job["record"] = bundle_rec
                 bundle.append_song(self.dest, bundle_rec)

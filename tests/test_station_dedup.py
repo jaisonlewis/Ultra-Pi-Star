@@ -2,6 +2,7 @@
 re-uploads whose YouTube source_id differs."""
 from station.jobs import _is_known_song, Station
 from station.bundle import known_songs, append_song
+from pathlib import Path
 
 
 PAIRS = [
@@ -72,8 +73,31 @@ def _station(tmp_path, monkeypatch):
 
 def test_remove_queued_job(tmp_path, monkeypatch):
     st = _station(tmp_path, monkeypatch)
+    st._stop.set()                        # worker exits; job stays queued
+    st._worker.join(5)
     jid = st.add({"source_id": "v1", "title": "Song"})
-    st.remove(jid)
+    assert st.remove(jid)
+    assert st.jobs[jid]["status"] == "cancelled"
+
+
+def test_remove_running_job_aborts_at_stage_boundary(tmp_path, monkeypatch):
+    import threading
+    gate = threading.Event()
+
+    def blocking_song(rec, dest, models_dir, on_stage=None):
+        if on_stage:
+            on_stage("downloading")
+        gate.wait(5)                      # job is running; cancel lands here
+        return _stub_song(rec, dest, models_dir, on_stage)
+    import station.pipeline
+    monkeypatch.setattr(station.pipeline, "process_song", blocking_song)
+    st = Station(tmp_path / "out", tmp_path / "models",
+                 on_event=lambda *a: None)
+    jid = st.add({"source_id": "v5", "title": "Song"})
+    while st.jobs[jid]["status"] != "running":
+        pass
+    assert st.remove(jid)
+    gate.set()
     st._q.join()
     assert st.jobs[jid]["status"] == "cancelled"
     st.stop()
@@ -115,4 +139,36 @@ def test_completed_job_leaves_persisted_queue(tmp_path, monkeypatch):
     recs = json.loads((tmp_path / "out" / ".station-queue.json")
                       .read_text(encoding="utf-8"))
     assert recs == []
+    st.stop()
+
+
+def test_youtube_job_prefetches_then_processes(tmp_path, monkeypatch):
+    from ultrapistar.providers import youtube
+    seen = {}
+
+    def fake_download(self, rec, dest_dir=None):
+        seen["dl"] = rec["source_id"]
+        f = Path(dest_dir) / "yt-v9.mp4"
+        f.write_bytes(b"media")
+        return f.name
+    monkeypatch.setattr(youtube.YouTubeProvider, "download", fake_download)
+
+    st = _station(tmp_path, monkeypatch)
+    jid = st.add({"source_id": "v9", "title": "T", "provider": "youtube"})
+    st._dl_q.join()
+    st._q.join()
+    assert seen["dl"] == "v9"
+    assert st.jobs[jid]["status"] == "done", st.jobs[jid].get("error")
+    st.stop()
+
+
+def test_local_file_skips_download_pool(tmp_path, monkeypatch):
+    media = tmp_path / "song.mp4"
+    media.write_bytes(b"m")
+    st = _station(tmp_path, monkeypatch)
+    jid = st.add({"source_id": "v10", "title": "T", "provider": "local",
+                  "local_file": str(media)})
+    st._q.join()
+    assert st.jobs[jid]["status"] == "done"
+    assert st._dl_q.empty()
     st.stop()
