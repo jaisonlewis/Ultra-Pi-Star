@@ -8,13 +8,26 @@ pre-song screen starts automatically.
 from __future__ import annotations
 
 import itertools
+import os
 import queue as _queue
+import re
 import threading
 import time
 from pathlib import Path
 
 from .db import Database
 from .providers import ProviderRegistry
+
+# YouTube session throttling is temporary (up to ~an hour) — requeue
+# the entry instead of marking it failed so the party doesn't need a
+# human to retry.
+_RL_PAT = re.compile(r"rate-limited|not a bot|try again later", re.I)
+_RL_COOLDOWN_SEC = int(os.environ.get("UPS_DL_COOLDOWN_MIN", "20")) * 60
+_RL_MAX_RETRIES = 3
+
+
+class _RateLimited(Exception):
+    """Provider hit a session throttle — retry after a cooldown."""
 
 
 class DownloadManager:
@@ -62,6 +75,15 @@ class DownloadManager:
             _prio, _seq, entry = self._q.get()
             try:
                 self._run(entry)
+            except _RateLimited:
+                # single worker blocking here *is* the backoff — the
+                # session stays throttled regardless of which video
+                # we'd try next
+                entry["_rl"] = entry.get("_rl", 0) + 1
+                with self._lock:
+                    self._in_flight.add(entry["entry_id"])
+                self._q.put((_prio, next(self._seq), entry))
+                time.sleep(_RL_COOLDOWN_SEC)
             finally:
                 self._q.task_done()
 
@@ -100,6 +122,9 @@ class DownloadManager:
                 self._on_available(entry_id)
             self._repush(entry_id)
         except Exception as exc:
+            if (_RL_PAT.search(str(exc))
+                    and entry.get("_rl", 0) + 1 < _RL_MAX_RETRIES):
+                raise _RateLimited() from exc
             # best-effort: a daemon thread can outlive the app/db during
             # shutdown — notifications are advisory, don't crash on them
             try:

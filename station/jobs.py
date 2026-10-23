@@ -6,14 +6,25 @@ the disk/GPU never thrash."""
 from __future__ import annotations
 
 import itertools
+import os
 import queue
 import re
 import threading
+import time
 import traceback
 from pathlib import Path
 
 
 _MEDIA_EXTS = (".mp4", ".mp3", ".m4a", ".webm", ".mkv")
+
+# YouTube session throttling — "rate-limited"/"not a bot"/"try again
+# later" all mean the session is flagged, not that the video is dead.
+# Park the download queue instead of failing jobs; the GPU pipeline
+# keeps draining whatever already downloaded.
+_RL_PAT = re.compile(r"rate-limited|not a bot|try again later", re.I)
+_RL_COOLDOWN_SEC = int(os.environ.get("UPS_DL_COOLDOWN_MIN", "30")) * 60
+_RL_MAX_RETRIES = 4
+_DL_GAP_SEC = float(os.environ.get("UPS_DL_GAP_SEC", "6"))
 
 
 def _tokens(s: str) -> set:
@@ -104,6 +115,7 @@ class Station:
         self._ids = itertools.count(1)
         self._stop = threading.Event()
         self._plock = threading.Lock()
+        self._dl_cooldown = 0.0
         self._restore_queue()
         # downloads are network-bound — run ahead of the GPU pipeline
         # (which stays strictly serial) so the worker never waits on http
@@ -166,6 +178,10 @@ class Station:
         from ultrapistar.providers.youtube import YouTubeProvider
         prov = YouTubeProvider(self.dest)
         while not self._stop.is_set():
+            left = self._dl_cooldown - time.time()
+            if left > 0:
+                self._stop.wait(min(left, 30))
+                continue
             try:
                 job = self._dl_q.get(timeout=0.5)
             except queue.Empty:
@@ -181,10 +197,25 @@ class Station:
                 job["rec"]["local_path"] = fname
                 self._persist()   # survives restart without re-downloading
                 self._q.put(job)
+                self._stop.wait(_DL_GAP_SEC)   # stay under the request cap
             except Exception as exc:
-                job["status"] = "failed"
-                job["error"] = str(exc)
-                self.on_event(job["id"], "failed", str(exc))
+                if (_RL_PAT.search(str(exc))
+                        and job.get("rl_retries", 0) < _RL_MAX_RETRIES):
+                    job["rl_retries"] = job.get("rl_retries", 0) + 1
+                    job["status"] = "queued"
+                    self._dl_cooldown = max(self._dl_cooldown,
+                                            time.time() + _RL_COOLDOWN_SEC)
+                    self.on_event(
+                        job["id"], "stage",
+                        f"rate-limited — downloads paused "
+                        f"{_RL_COOLDOWN_SEC // 60}min, "
+                        f"processing continues")
+                    self._persist()
+                    self._dl_q.put(job)      # retry after the cooldown
+                else:
+                    job["status"] = "failed"
+                    job["error"] = str(exc)
+                    self.on_event(job["id"], "failed", str(exc))
             finally:
                 self._dl_q.task_done()
 
