@@ -21,7 +21,8 @@ function armNeverStart() {
     /* 'playing' can fire while the media clock never advances — Chromium
        reports the pipeline ready but a dead audio output pins
        currentTime at 0. Progress (timeupdate) is the real heartbeat. */
-    if (currentItemId && !video.ended && video.currentTime < 0.05)
+    if (currentItemId && !video.ended &&
+        video.currentTime < seekBase + 0.05)
       socket.emit("player:stuck", { item: currentItemId });
   }, 10000);
 }
@@ -41,6 +42,7 @@ let prevStreak = {};       // track -> streak last frame (milestone detect)
 let scoreTween = 0;        // rAF id while score digits are animating
 let currentItemId = null;   // ignore full re-pushes for the same song
 let waitingEntryId = null;  // entry on the "Preparing…" screen — stage updates target it
+let seekBase = 0;           // seconds — lead-in skip target for this song
 
 function show(id) {
   $("#idle").classList.toggle("hidden", id !== "idle");
@@ -888,6 +890,8 @@ function drawViz2D(bands) {
 
 let vizWanted = false;   // server says the file has no real video track
 video.addEventListener("loadedmetadata", () => {
+  // start ~5s before the first sung note — skips long talky/drama intros
+  if (seekBase > 0) video.currentTime = seekBase;
   // mp3s with embedded cover art report a video stream — trust the
   // server's stream probe over the element's metadata
   setVisuals(vizWanted ||
@@ -909,6 +913,7 @@ socket.on("now_playing", (payload) => {
   if (!payload) {
     currentItemId = null;
     waitingEntryId = null;
+    seekBase = 0;
     show("idle");
     setLaneData(null);
     sungTrails = {}; liveScores = {}; sparks = [];
@@ -971,6 +976,16 @@ socket.on("now_playing", (payload) => {
     P2: payload.item.singer2 || "P2",
   };
   vizWanted = !!payload.playback.audio_only;
+  // first sung note across all tracks -> lead-in seek target
+  seekBase = 0;
+  if (payload.lyrics && payload.lyrics.lanes) {
+    let first = Infinity;
+    for (const t of Object.keys(payload.lyrics.lanes)) {
+      const lane = payload.lyrics.lanes[t];
+      if (lane && lane.length) first = Math.min(first, lane[0].start_ms);
+    }
+    if (isFinite(first)) seekBase = Math.max(0, first / 1000 - 5);
+  }
   video.src = payload.playback.uri;
   video.load();
   preSong(payload);
