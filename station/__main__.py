@@ -14,6 +14,13 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def _scan(argv):
+    # headless runs redirect stdout to a file — cp1252 chokes on
+    # non-ASCII artist/title names (emoji, CJK) and kills the job
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     p = argparse.ArgumentParser(prog="python -m station")
     p.add_argument("--scan", metavar="FOLDER", required=True,
                    help="staging root holding media (+ pi-catalog.json)")

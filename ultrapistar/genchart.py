@@ -467,7 +467,8 @@ def generate(artist: str, title: str, lyric_rec: dict | None,
             # every line to the real phrase start. Text anchors only
             # decide WHICH record this is, never where lines sit.
             heard = [t for _, t in asr]
-            deltas = [spans[li]["onset_ms"] - times[li] for li in spans]
+            deltas = ([spans[li]["onset_ms"] - times[li] for li in spans]
+                      if times else [])
             shift = (_onset_shift(times, heard, deltas)
                      or _lrc_shift(deltas, synced, asr)
                      if times else None)
