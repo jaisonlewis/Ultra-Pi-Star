@@ -1,6 +1,6 @@
 """Station-level song dedup — the fuzzy artist+title check that catches
 re-uploads whose YouTube source_id differs."""
-from station.jobs import _is_known_song
+from station.jobs import _is_known_song, Station
 from station.bundle import known_songs, append_song
 
 
@@ -53,3 +53,66 @@ def test_known_songs_roundtrip(tmp_path):
     append_song(tmp_path, {"source_id": "x1", "artist": "Sia",
                            "title": "Chandelier"})
     assert ("Sia", "Chandelier") in known_songs(tmp_path)
+
+
+def _stub_song(rec, dest, models_dir, on_stage=None):
+    if on_stage:
+        on_stage("downloading")
+    return {"artist": "A", "title": "T", "source_id": rec["source_id"],
+            "local_path": rec.get("local_path", "x.mp4"), "inst_path": "",
+            "chart": "", "art": "", "provenance": "station"}
+
+
+def _station(tmp_path, monkeypatch):
+    import station.pipeline
+    monkeypatch.setattr(station.pipeline, "process_song", _stub_song)
+    return Station(tmp_path / "out", tmp_path / "models",
+                   on_event=lambda *a: None)
+
+
+def test_remove_queued_job(tmp_path, monkeypatch):
+    st = _station(tmp_path, monkeypatch)
+    jid = st.add({"source_id": "v1", "title": "Song"})
+    st.remove(jid)
+    st._q.join()
+    assert st.jobs[jid]["status"] == "cancelled"
+    st.stop()
+
+
+def test_remove_finished_job_refused(tmp_path, monkeypatch):
+    st = _station(tmp_path, monkeypatch)
+    jid = st.add({"source_id": "v2", "title": "Song"})
+    st._q.join()
+    assert st.jobs[jid]["status"] == "done"
+    assert not st.remove(jid)
+    st.stop()
+
+
+def test_queue_persists_across_restarts(tmp_path, monkeypatch):
+    st = _station(tmp_path, monkeypatch)
+    st._stop.set()                      # freeze the worker so it stays queued
+    jid = st.add({"source_id": "v3", "title": "Song"})
+    st._q.queue.clear()                 # and make sure it never runs it
+    qf = tmp_path / "out" / ".station-queue.json"
+    assert qf.is_file()
+    st.stop()
+
+    import station.pipeline
+    monkeypatch.setattr(station.pipeline, "process_song", _stub_song)
+    st2 = Station(tmp_path / "out", tmp_path / "models",
+                  on_event=lambda *a: None)
+    assert [j["rec"]["source_id"] for j in st2.jobs.values()] == ["v3"]
+    st2._stop.set()
+    st2._q.queue.clear()
+    st2.stop()
+
+
+def test_completed_job_leaves_persisted_queue(tmp_path, monkeypatch):
+    st = _station(tmp_path, monkeypatch)
+    st.add({"source_id": "v4", "title": "Song"})
+    st._q.join()
+    import json
+    recs = json.loads((tmp_path / "out" / ".station-queue.json")
+                      .read_text(encoding="utf-8"))
+    assert recs == []
+    st.stop()

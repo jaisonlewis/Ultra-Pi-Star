@@ -92,11 +92,21 @@ class App(tk.Tk):
         self.tree.column("stage", width=160)
         self.tree.column("status", width=120)
         self.tree.pack(fill="both", expand=True, padx=8, pady=6)
+        self.tree.bind("<Delete>", lambda _e: self.remove_selected())
+        btn = ttk.Frame(self, padding=(8, 0))
+        btn.pack(fill="x")
+        ttk.Button(btn, text="Remove selected",
+                   command=self.remove_selected).pack(side="left")
+        ttk.Label(btn, text="Delete key works too — queued items drop out "
+                            "instantly; a running song stops at its next "
+                            "stage.",
+                  foreground="#666").pack(side="left", padx=8)
         self.status = tk.StringVar(value="ready")
         ttk.Label(self, textvariable=self.status, anchor="w",
                   padding=8).pack(fill="x")
         self._rows: dict[int, str] = {}
         self.after(200, self._poll)
+        self._ensure_station()   # resumes the persisted queue if any
 
     def _default_dest(self) -> str:
         drives = find_prepared_drives()
@@ -130,6 +140,9 @@ class App(tk.Tk):
                 Path(self.dest.get()), REPO / "models",
                 on_event=lambda *a: self._events.put(a), push=push,
                 tier=self._tier_key())
+            # surface jobs restored from the persisted queue
+            for jid, job in self._station.jobs.items():
+                self._events.put((jid, "queued", job["rec"]))
         elif gpu.current_tier() != self._tier_key():
             gpu.configure(self._tier_key())   # tier changed mid-run
 
@@ -177,6 +190,20 @@ class App(tk.Tk):
                 self._events.put((None, "summary", f"scan error: {exc}"))
         threading.Thread(target=work, daemon=True).start()
 
+    def remove_selected(self):
+        if not self._station:
+            return
+        inv = {iid: jid for jid, iid in self._rows.items()}
+        n = 0
+        for iid in self.tree.selection():
+            jid = inv.get(iid)
+            if jid is not None and self._station.remove(jid):
+                n += 1
+        if n:
+            self.status.set(f"cancelled {n} job(s)")
+        else:
+            self.status.set("nothing to remove — select a queued row")
+
     def _poll(self):
         try:
             while True:
@@ -197,6 +224,8 @@ class App(tk.Tk):
                     vals[1], vals[2] = "done", "ready"
                 elif ev == "pushed":
                     vals[1], vals[2] = "pushed", "on Pi"
+                elif ev == "cancelled":
+                    vals[1], vals[2] = "", "cancelled"
                 elif ev == "failed":
                     vals[2] = "failed"
                     self.status.set(f"{label}: {payload}")

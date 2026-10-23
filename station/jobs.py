@@ -52,6 +52,11 @@ def _is_known_song(rec: dict, pairs) -> bool:
     return False
 
 
+class _Cancelled(Exception):
+    """Raised inside the stage callback to abort a running job at the
+    next stage boundary."""
+
+
 def _is_source_media(p: Path) -> bool:
     """Original media only — derived sidecars (inst/vocals) never get
     their own jobs."""
@@ -97,16 +102,62 @@ class Station:
         self._q: queue.Queue = queue.Queue()
         self._ids = itertools.count(1)
         self._stop = threading.Event()
+        self._restore_queue()
         self._worker = threading.Thread(
             target=self._loop, daemon=True, name="station-worker")
         self._worker.start()
+
+    @property
+    def _queue_file(self) -> Path:
+        return self.dest / ".station-queue.json"
+
+    def _persist(self) -> None:
+        """Rewrite the on-disk queue — everything still queued or running
+        is re-queued on next launch (a job that died mid-run simply
+        restarts; pipeline stages are idempotent)."""
+        import json
+        try:
+            recs = [j["rec"] for j in self.jobs.values()
+                    if j["status"] in ("queued", "running")]
+            self.dest.mkdir(parents=True, exist_ok=True)
+            tmp = self._queue_file.with_suffix(".tmp")
+            tmp.write_text(json.dumps(recs, ensure_ascii=False),
+                           encoding="utf-8")
+            tmp.replace(self._queue_file)
+        except OSError:
+            pass                      # persistence is best-effort
+
+    def _restore_queue(self) -> None:
+        import json
+        try:
+            recs = json.loads(self._queue_file.read_text(
+                encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        for rec in recs:
+            jid = next(self._ids)
+            job = {"id": jid, "rec": rec, "status": "queued", "stage": ""}
+            self.jobs[jid] = job
+            self._q.put(job)
 
     def add(self, rec: dict) -> int:
         jid = next(self._ids)
         job = {"id": jid, "rec": rec, "status": "queued", "stage": ""}
         self.jobs[jid] = job
         self._q.put(job)
+        self._persist()
         return jid
+
+    def remove(self, jid: int) -> bool:
+        """Cancel a job. Queued jobs are skipped when the worker reaches
+        them; a running job aborts at its next stage boundary. Returns
+        False for jobs that already finished/failed."""
+        job = self.jobs.get(jid)
+        if not job or job["status"] not in ("queued", "running"):
+            return False
+        job["status"] = "cancelled"
+        self._persist()
+        return True
 
     def expand_and_add(self, url: str) -> tuple[str, list[int]]:
         """Playlist URL → a job per track; single video → one job.
@@ -185,13 +236,22 @@ class Station:
                 job = self._q.get(timeout=0.5)
             except queue.Empty:
                 continue
+            if job["status"] == "cancelled":
+                self.on_event(job["id"], "cancelled", "")
+                self._q.task_done()
+                continue
+            job["status"] = "running"
+            self._persist()
             try:
                 def stage(s, _j=job):
+                    if _j["status"] == "cancelled":
+                        raise _Cancelled()
                     _j["stage"] = s
                     self.on_event(_j["id"], "stage", s)
                 rec = bundle_rec = process_song(
                     job["rec"], self.dest, self.models_dir,
                     on_stage=stage)
+                job["status"] = "done"
                 job["record"] = bundle_rec
                 bundle.append_song(self.dest, bundle_rec)
                 chart_path = ((self.dest / bundle_rec["chart"])
@@ -203,12 +263,15 @@ class Station:
                         bundle_rec, self.dest, chart_path,
                         self.push["url"], self.push["key"])
                     self.on_event(job["id"], "pushed", resp)
+            except _Cancelled:
+                self.on_event(job["id"], "cancelled", "")
             except Exception as exc:
                 job["status"] = "failed"
                 job["error"] = str(exc)
                 traceback.print_exc()
                 self.on_event(job["id"], "failed", str(exc))
             finally:
+                self._persist()
                 self._q.task_done()
 
     def stop(self):
