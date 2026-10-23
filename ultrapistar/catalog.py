@@ -71,7 +71,7 @@ SELECT s.id, s.artist, s.title, s.language, s.is_duet, s.tracks,
        e.duration_sec, e.thumbnail, e.provenance, e.inst_path,
        e.meta_artist, e.meta_track, e.meta_album,
        c.id AS chart_id, c.verified AS chart_verified, c.confidence AS chart_confidence,
-       c.is_duet AS chart_duet, c.sync_offset_ms
+       c.is_duet AS chart_duet, c.sync_offset_ms, c.has_alt AS chart_alt
 FROM song s
 JOIN media_entry e ON e.song_id = s.id
 LEFT JOIN chart c ON c.id = (
@@ -124,11 +124,14 @@ class Catalog:
                      source_repo: str = "", revision: str = "", confidence: float = 0.0,
                      verified: bool = False, license_note: str = "") -> int:
         chart = load_chart(file_path)
+        has_alt = any(n.alt for notes in chart.tracks.values() for n in notes)
         return self.db.execute(
             "INSERT INTO chart (song_id,media_entry_id,revision,source_repo,file_path,"
-            " is_duet,verified,confidence,license_note) VALUES (?,?,?,?,?,?,?,?,?)",
+            " is_duet,verified,confidence,license_note,has_alt)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
             (song_id, media_entry_id, revision, source_repo, str(file_path),
-             int(chart.is_duet), int(verified), confidence, license_note),
+             int(chart.is_duet), int(verified), confidence, license_note,
+             int(has_alt)),
         )
 
     # -- reads ---------------------------------------------------------------
@@ -216,11 +219,14 @@ class Catalog:
     def library(self) -> list[dict]:
         return self.search("")
 
-    def chart_payload(self, entry_id: int) -> dict | None:
+    def chart_payload(self, entry_id: int, rom: bool = False) -> dict | None:
         """Timed lyric lines for the *verified* chart on this media entry.
 
         Beats convert to milliseconds via BPM/GAP plus the per-entry sync
         offset (Phase 4 decision: sync lives on the chart↔entry record).
+        ``rom`` renders the romanized alternates a dual-script chart
+        carries in Note.alt — the singer picks at queue time like the
+        vocal/no-vocal toggle.
         """
         rows = self.db.query(
             "SELECT * FROM chart WHERE verified=1 AND (media_entry_id=?"
@@ -237,6 +243,14 @@ class Catalog:
                 break
         if chart is None:
             return None
+        has_alt = any(n.alt for notes in chart.tracks.values() for n in notes)
+        if has_alt and not row["has_alt"]:
+            # backfill the flag lazily — charts attached before the
+            # column existed report alt through search only after a
+            # chart file is actually opened
+            self.db.execute("UPDATE chart SET has_alt=1 WHERE id=?",
+                            (row["id"],))
+        rom = rom and has_alt
         # learned per-media timing: a global tempo ratio plus per-phrase
         # boundary marks. Each mark applies from its phrase onward until
         # the next one — gaps that run short/long in this media step the
@@ -260,8 +274,9 @@ class Catalog:
             tracks[track] = [
                 {"start_ms": p["start"] * beat_ms + warp_at(p["start"]),
                  "end_ms": p["end"] * beat_ms + warp_at(p["start"]),
-                 "text": p["text"],
-                 "syls": [{"t": s["t"], "wb": s["wb"],
+                 "text": (p.get("atext") or p["text"]) if rom else p["text"],
+                 "syls": [{"t": (s.get("at") or s["t"]) if rom else s["t"],
+                           "wb": s["wb"],
                            "start_ms": s["s"] * beat_ms + warp_at(s["s"]),
                            "end_ms": s["e"] * beat_ms + warp_at(s["s"])}
                           for s in p["syls"]]}
@@ -273,10 +288,12 @@ class Catalog:
             lanes[track] = [
                 {"start_ms": n.start * beat_ms + warp_at(n.start),
                  "end_ms": (n.start + n.length) * beat_ms + warp_at(n.start),
-                 "tone": n.pitch, "kind": n.kind, "text": n.text}
+                 "tone": n.pitch, "kind": n.kind,
+                 "text": (n.alt or n.text) if rom else n.text}
                 for n in chart.tracks[track]
             ]
         return {"is_duet": chart.is_duet, "offset_ms": row["sync_offset_ms"],
+                "has_alt": has_alt, "rom": rom,
                 "bpm": chart.bpm, "beat_ms": beat_ms,
                 "gap_ms": chart.gap_ms,
                 "warp": [[int(b), float(o)] for b, o in warp],

@@ -35,6 +35,7 @@ class Note:
     pitch: int
     text: str          # clean syllable text (no edge spaces, no '~')
     word_break: bool = False   # this syllable starts a new display word
+    alt: str = ""      # romanized text when the lyric script isn't latin
 
 
 @dataclass
@@ -97,15 +98,20 @@ class Chart:
         for track in self.tracks:
             lines = []
             for l in self.lines(track):
-                text = "".join(
-                    (" " if i and n.word_break else "")
-                    + n.text.replace("~", "")
-                    for i, n in enumerate(l)).strip()
+                def join(getter):
+                    return "".join(
+                        (" " if i and n.word_break else "") + getter(n)
+                        for i, n in enumerate(l)).strip()
+                has_alt = any(n.alt for n in l)
                 lines.append({
                     "start": l[0].start,
                     "end": l[-1].start + l[-1].length,
-                    "text": text,
+                    "text": join(lambda n: n.text.replace("~", "")),
+                    **({"atext": join(lambda n: (n.alt or n.text)
+                                                 .replace("~", ""))}
+                       if has_alt else {}),
                     "syls": [{"t": n.text.replace("~", ""),
+                              **({"at": n.alt} if n.alt else {}),
                               "wb": n.word_break,
                               "s": n.start, "e": n.start + n.length}
                              for n in l],
@@ -213,6 +219,8 @@ def native_path(path: Path | str) -> Path:
 
 def _note_to_native(n: Note) -> dict:
     d = {"s": n.start, "l": n.length, "p": n.pitch, "t": n.text}
+    if n.alt:
+        d["at"] = n.alt
     if n.kind != "normal":
         d["k"] = n.kind
     if n.word_break:
@@ -243,7 +251,8 @@ def from_native(d: dict) -> Chart:
     tracks = d.get("tracks") or {}
     chart.tracks = {
         t: [Note(n.get("k", "normal"), int(n["s"]), int(n["l"]),
-                 int(n["p"]), str(n.get("t", "")), bool(n.get("wb")))
+                 int(n["p"]), str(n.get("t", "")), bool(n.get("wb")),
+                 str(n.get("at", "")))
             for n in notes]
         for t, notes in tracks.items()
     } or {"P1": []}

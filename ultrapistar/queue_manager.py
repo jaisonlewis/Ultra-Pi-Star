@@ -16,7 +16,7 @@ TERMINAL = ("done", "skipped", "error")
 
 ITEM_SQL = """
 SELECT q.id, q.status, q.position, q.part_choice, q.created_at,
-       q.song_id, q.performer_id, q.performer2_id, q.vocal_cut,
+       q.song_id, q.performer_id, q.performer2_id, q.vocal_cut, q.lyrics_rom,
        s.artist, s.title, s.is_duet,
        e.provider, e.local_path, e.id AS entry_id, e.status AS entry_status,
        p.name AS singer, p.color AS singer_color,
@@ -35,18 +35,19 @@ class QueueManager:
 
     def add(self, song_id: int, entry_id: int, performer_id: int,
             performer2_id: int | None = None, part_choice: str = "",
-            vocal_cut: int | None = None) -> int:
+            vocal_cut: int | None = None,
+            lyrics_rom: int | None = None) -> int:
         with self.db.session() as conn:
             top = conn.execute(
                 "SELECT COALESCE(MAX(position),0) FROM queue_item WHERE status=?",
                 (STATUS_QUEUED,)).fetchone()[0]
             cur = conn.execute(
                 "INSERT INTO queue_item (song_id,media_entry_id,performer_id,"
-                " performer2_id,part_choice,vocal_cut,position,status,"
-                " created_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?)",
+                " performer2_id,part_choice,vocal_cut,lyrics_rom,position,"
+                " status,created_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)",
                 (song_id, entry_id, performer_id, performer2_id, part_choice,
-                 vocal_cut, top + 1.0, STATUS_QUEUED, time.time()))
+                 vocal_cut, lyrics_rom, top + 1.0, STATUS_QUEUED, time.time()))
             return cur.lastrowid
 
     def list(self, include_terminal: bool = False) -> list[dict]:

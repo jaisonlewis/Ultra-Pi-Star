@@ -359,3 +359,37 @@ def test_onset_snaps_back_to_run_start():
     bm = 15000 / chart.bpm
     first = chart.tracks["P1"][0]
     assert first.start * bm <= 11500          # at the 11000 run start
+
+
+def test_romanize_fills_note_alt():
+    """Native-script notes get romanized alternates; latin notes stay bare."""
+    pytest.importorskip("pykakasi")
+    from ultrapistar import romanize
+    from ultrapistar.charts import Chart, Note, to_native, from_native
+    c = Chart()
+    c.tracks = {"P1": [Note("normal", 0, 4, 10, "上を向いて", True),
+                       Note("normal", 4, 4, 10, "hello", True)]}
+    assert romanize.romanize_chart(c)
+    n0 = c.tracks["P1"][0]
+    assert n0.alt and "ue" in n0.alt
+    assert c.tracks["P1"][1].alt == ""
+    # round-trips through the native format
+    c2 = from_native(to_native(c))
+    assert c2.tracks["P1"][0].alt == n0.alt
+    ph = c2.phrases()["P1"][0]
+    assert "atext" in ph and "at" in ph["syls"][0]
+
+
+def test_romanize_korean():
+    pytest.importorskip("hangul_romanize")
+    from ultrapistar import romanize
+    out = romanize.romanize_text("나의 우주", hint="kr")
+    assert out and "na" in out
+    # mixed latin + hangul keeps both
+    out = romanize.romanize_text("me, 끝나지 않을 history")
+    assert "me," in out and "history" in out
+
+
+def test_romanize_latin_unchanged():
+    from ultrapistar import romanize
+    assert romanize.romanize_text("summer has come") == ""

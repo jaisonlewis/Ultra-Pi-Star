@@ -43,6 +43,38 @@ def _curve(doc: dict):
     return np.arange(len(f0)) * hop, f0, conf
 
 
+def romanize_library(root: Path, only: str = "",
+                     dry_run: bool = False) -> dict:
+    """Fill Note.alt on every .upsong under charts/ that needs it —
+    works even on charts whose analysis sidecar is gone, since the
+    source text lives in the file itself."""
+    from ultrapistar import romanize
+    from ultrapistar.charts import load_chart, save_native
+
+    stats = {"ok": 0, "skipped": 0, "err": 0}
+    for path in sorted((root / "charts").glob("*.upsong")):
+        if only and only.lower() not in path.stem.lower():
+            continue
+        try:
+            chart = load_chart(path)
+            if not any(n.alt for notes in chart.tracks.values()
+                       for n in notes):
+                if dry_run:
+                    stats["ok"] += 1
+                    log.info("would romanize %s", path.name)
+                    continue
+                if romanize.romanize_chart(chart):
+                    save_native(chart, path, source=chart.source)
+                    stats["ok"] += 1
+                    log.info("romanized %s", path.name)
+                    continue
+            stats["skipped"] += 1
+        except Exception as e:
+            stats["err"] += 1
+            log.warning("romanize failed for %s: %s", path.name, e)
+    return stats
+
+
 def rechart(root: Path, only: str = "", dry_run: bool = False,
             delay: float = 0.15) -> dict:
     from ultrapistar import genchart, lyrics
@@ -113,11 +145,19 @@ def main(argv=None) -> int:
                     help="prepared library root (contains manifest.json)")
     ap.add_argument("--only", default="",
                     help="only songs whose 'Artist - Title' contains this")
+    ap.add_argument("--romanize", action="store_true",
+                    help="skip chart regen — just fill Note.alt romanized "
+                         "alternates on existing .upsong files (offline)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--delay", type=float, default=0.15,
                     help="seconds between songs (lyrics fetch pacing)")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    if args.romanize:
+        stats = romanize_library(args.root, only=args.only,
+                                 dry_run=args.dry_run)
+        print("romanize:", stats)
+        return 0
     stats = rechart(args.root, only=args.only, dry_run=args.dry_run,
                     delay=args.delay)
     print("rechart:", stats)

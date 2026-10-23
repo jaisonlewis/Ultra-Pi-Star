@@ -296,8 +296,10 @@ def _apply_warp_live(ctx, entry_id, item_id, res) -> None:
         pos = sess._media_at(time.monotonic())
         if pos is not None:
             sess.apply_sync_offset(res["offset_ms"], pos)
+    item = ctx["queue"].now_playing()
     ctx["socketio"].emit(
-        "lyrics", ctx["catalog"].chart_payload(entry_id))
+        "lyrics", ctx["catalog"].chart_payload(
+            entry_id, rom=bool((item or {}).get("lyrics_rom"))))
     ctx["socketio"].emit("sing:autosync", {
         "offset_ms": res["offset_ms"],
         "method": res.get("method", "align"),
@@ -592,7 +594,8 @@ def push_now_playing(ctx):
         if ref and item["entry_id"] in ctx.get("map_inflight", ()):
             ref = None
             waiting = "processing"
-        lyrics = (ctx["catalog"].chart_payload(item["entry_id"])
+        lyrics = (ctx["catalog"].chart_payload(
+                      item["entry_id"], rom=bool(item.get("lyrics_rom")))
                   if scoring else None)
         # mic-handoff countdown: once media is ready, play_at marks when the
         # TV may start the video (set once per item so re-pushes don't reset it)

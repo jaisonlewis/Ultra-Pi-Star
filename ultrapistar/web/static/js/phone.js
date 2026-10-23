@@ -666,6 +666,7 @@ function openConfirm(entry) {
   $("#confirm-chart-note").innerHTML = badges(entry) +
     (entry.scoring_available ? "" :
       '<p class="muted">No verified chart for this video — it will play without scoring.</p>');
+  $("#confirm-rom-wrap").classList.toggle("hidden", !entry.chart_alt);
   const isDuet = entry.is_duet || entry.chart_duet;
   $("#confirm-singer2-wrap").classList.toggle("hidden", !isDuet);
   const partWrap = $("#confirm-part-wrap");
@@ -694,6 +695,8 @@ $("#confirm-form").addEventListener("submit", async (e) => {
     part: $("#confirm-part").value,
     name2: $("#confirm-singer2").value.trim(),
     vocal_cut: $("#confirm-vocal-cut").checked ? 1 : 0,
+    lyrics_rom: ($("#confirm-rom").checked
+                 && !$("#confirm-rom-wrap").classList.contains("hidden")) ? 1 : 0,
   };
   try {
     await api("/api/queue", "POST", body);
@@ -750,6 +753,7 @@ socket.on("state", (state) => {
       singerChip(it.singer, it.singer_color) +
       (it.singer2 ? " &amp; " + singerChip(it.singer2, it.singer2_color) : "") +
       (it.vocal_cut ? ' <span class="badge scoring">no vocals</span>' : "") +
+      (it.lyrics_rom ? ' <span class="badge scoring">romaji</span>' : "") +
       (openDuet ? ' <span class="badge scoring">duet — P2 open</span>' : "") +
       (it.entry_status === "downloading" ? ' <span class="badge video-only">downloading</span>' : "") +
       (it.entry_status === "failed" ? ' <span class="badge" style="background:#5c1f24;color:#ffb4b4">download failed</span>' : "") +

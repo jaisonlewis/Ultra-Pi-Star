@@ -167,11 +167,21 @@ class Database:
                 # NULL = follow the server default; 0/1 = per-song choice
                 conn.execute(
                     "ALTER TABLE queue_item ADD COLUMN vocal_cut INTEGER")
+            if "lyrics_rom" not in cols:
+                # NULL/0 = native lyric script; 1 = romanized when the
+                # chart carries Note.alt alternates
+                conn.execute(
+                    "ALTER TABLE queue_item ADD COLUMN lyrics_rom INTEGER")
             cols = {r[1] for r in conn.execute("PRAGMA table_info(chart)")}
             if "sync_warp" not in cols:
                 conn.execute(
                     "ALTER TABLE chart ADD COLUMN sync_warp TEXT NOT NULL"
                     " DEFAULT '[]'")
+            if "has_alt" not in cols:
+                # chart carries romanized alternates (Note.alt)
+                conn.execute(
+                    "ALTER TABLE chart ADD COLUMN has_alt INTEGER NOT NULL"
+                    " DEFAULT 0")
 
     # -- performers ---------------------------------------------------------
     def add_performer(self, name: str, sid: str | None = None) -> dict:

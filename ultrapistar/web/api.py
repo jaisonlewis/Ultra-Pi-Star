@@ -695,9 +695,11 @@ def _queue_one(ctx, body, perf_id):
     # per-song vocal suppression: NULL follows the server default
     vc = body.get("vocal_cut")
     vocal_cut = None if vc is None else int(bool(vc))
+    lr = body.get("lyrics_rom")
+    lyrics_rom = None if lr is None else int(bool(lr))
     item_id = ctx["queue"].add(entry["id"], entry["entry_id"], perf_id,
                                performer2_id=perf2_id, part_choice=part,
-                               vocal_cut=vocal_cut)
+                               vocal_cut=vocal_cut, lyrics_rom=lyrics_rom)
     # if the player is idle, promote this item and start it immediately —
     # the TV holds a "downloading" screen if the media isn't ready yet
     if not ctx["queue"].now_playing():
@@ -1046,7 +1048,8 @@ def playback_sync():
                       (new_off, row["id"]))
     # live re-send of the lyric payload — TV swaps it in without touching
     # the video element (a full now_playing push would restart playback)
-    lyrics = ctx["catalog"].chart_payload(item["entry_id"])
+    lyrics = ctx["catalog"].chart_payload(
+        item["entry_id"], rom=bool(item.get("lyrics_rom")))
     ctx["socketio"].emit("lyrics", lyrics)
     if ctx.get("sing"):
         ctx["sing"].set_sync_offset(new_off)

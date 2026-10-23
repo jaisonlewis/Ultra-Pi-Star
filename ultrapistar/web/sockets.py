@@ -188,6 +188,8 @@ def init(socketio: SocketIO, queue: QueueManager, catalog: Catalog,
                         (new_off, json.dumps(warp_map), row["id"]))
                 sess.apply_sync_offset(new_off, pos_ms)
                 socketio.emit("lyrics",
-                              ctx["catalog"].chart_payload(item["entry_id"]))
+                              ctx["catalog"].chart_payload(
+                                  item["entry_id"],
+                                  rom=bool(item.get("lyrics_rom"))))
             if res:
                 socketio.emit("sing:autosync", res)

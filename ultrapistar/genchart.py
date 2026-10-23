@@ -653,6 +653,11 @@ def generate(artist: str, title: str, lyric_rec: dict | None,
     key = (melody.estimate_key(*pitch_curve) if pitch_curve else None)
     if key:
         chart.source["key"] = key
+    try:
+        from . import romanize
+        romanize.romanize_chart(chart)
+    except Exception:
+        pass                         # romanizers are optional deps
     return chart if not chart.validate() else None
 
 
