@@ -137,6 +137,8 @@ class Catalog:
         rows = self.db.query(
             SEARCH_SQL + (" LIMIT ?" if limit else ""),
             (like, like, like) + ((limit,) if limit else ()))
+        # dead downloads aren't playable — don't offer them to singers
+        rows = [r for r in rows if r["status"] != "failed"]
         tops = self.top_scores()
         for r in rows:
             r["tracks"] = json.loads(r["tracks"])
