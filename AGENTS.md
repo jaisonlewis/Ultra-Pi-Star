@@ -57,6 +57,16 @@
   `organize()`, and `station.organize` (one-shot migration of flat
   roots; also a GUI button) all share it. Manifest paths are
   root-relative so both Pi and Switch resolve them identically.
+- Library hygiene tools: `python -m station.audit <root>` checks every
+  folder for media/inst/vocals/analysis/art/chart plus nonblank lyrics
+  and ASR-fallback provenance (`--json` for a report).
+  `python -m station.rechart <root> --asr` retries only charts whose
+  lyrics were ASR-generated; `--fix-meta` adopts the chosen lyric
+  record's canonical artist/title (guarded by `_meta_ok` — rejects
+  same-title-different-song picks and channel-prefixed records).
+  `python -m station.fixmeta <root>` heals video-upload metadata
+  offline (channel artist + "Artist - Title" in the title field).
+  After any metadata change run `station.organize` to rename dirs.
 - Media roots: `media_dir` is the write target; `media_extra_dirs` are
   read fallbacks. `config.media_path(rel)` resolves across all roots —
   always use it for entry-relative reads (`local_path`, `inst_path`,
