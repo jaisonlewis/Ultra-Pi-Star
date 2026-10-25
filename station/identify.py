@@ -58,6 +58,31 @@ def _clusters(root: Path):
             yield d.name[3:], media
 
 
+_CHAN_SUFFIX = re.compile(
+    r"(?i)\s*[-– ]?\s*(vevo|official|music|records?|tv|channel|"
+    r"topic|videos|hq|hd|- topic)$")
+
+
+def _author_artist(author: str, raw_title: str) -> tuple[str, str]:
+    """(artist, title) from the uploader channel when the title has no
+    'Artist - Title' split. Only fires when the cleaned channel name
+    literally appears in the title — 'Paramore' in 'Paramore: That's
+    What You Get' — so label channels (RHINO) and junk uploaders never
+    guess. Returns ('', title) unchanged otherwise."""
+    a = _CHAN_SUFFIX.sub("", author).strip(" -–:")
+    t = raw_title
+    if len(re.sub(r"[^a-z0-9]", "", a.lower())) < 2:
+        return "", t
+    if a.lower() not in t.lower():
+        return "", t
+    # channel name is the artist — strip its 'Paramore:' / 'Queen - '
+    # prefix off the title if present
+    m = re.match(rf"(?i)^{re.escape(a)}\s*[-–:|]\s*", t)
+    if m:
+        t = t[m.end():].strip() or t
+    return a, t
+
+
 def identify(root: Path, delay: float = 0.15) -> dict:
     """→ {vid: {"author", "title", "dead"}} for every cluster —
     oEmbed results cached between runs."""
@@ -125,6 +150,9 @@ def requeue(root: Path, dry: bool = False, delay: float = 0.15,
         raw_title = info["title"]
         parsed = _split_video_title(raw_title)
         artist, title = parsed if parsed else ("", _tidy(raw_title))
+        if not artist:
+            artist, title = _author_artist(info.get("author", ""),
+                                           title)
         blob = f"{artist} {title} {raw_title}"
         if _ALBUM.search(blob) or _LIVE.search(blob):
             stats["junk"] += 1

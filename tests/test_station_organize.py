@@ -58,6 +58,24 @@ class TestIdentify:
         assert stats["queued"] == 0
         assert not (tmp_path / ".station-queue.json").exists()
 
+    def test_author_artist_fills_blank(self):
+        """Channel name appearing in the title = the artist, with its
+        prefix stripped from the title."""
+        a, t = identify._author_artist(
+            "Paramore", "Paramore: That's What You Get")
+        assert (a, t) == ("Paramore", "That's What You Get")
+
+    def test_author_artist_strips_channel_suffix(self):
+        a, t = identify._author_artist(
+            "Queen Official", "Queen - Friends Will Be Friends")
+        assert a == "Queen" and "Friends" in t
+
+    def test_label_channel_does_not_guess(self):
+        """RHINO isn't in the video title — no artist guessed; the
+        song falls to music_meta/lrc resolution instead."""
+        a, _ = identify._author_artist("RHINO", "White Lion - Wait")
+        assert a == ""
+
     def test_requeue_enqueue_routes_live_no_file(self, tmp_path,
                                                monkeypatch):
         """With enqueue=station.add (running station), recs go to the
