@@ -7,6 +7,56 @@ from station.audit import _chart_problems, audit
 from station.fixmeta import heal
 from station.rechart import _meta_ok
 from station.prune import _reasons, prune
+from station import identify
+
+
+class TestIdentify:
+    def _cluster(self, root, vid, size=2_000_000):
+        d = root / "_unsorted" / f"yt-{vid}"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"yt-{vid}.mp4").write_bytes(b"x" * size)
+        return d
+
+    def test_clusters_skips_fragments(self, tmp_path):
+        self._cluster(tmp_path, "realsong123")
+        self._cluster(tmp_path, "tinyfrag", size=100)
+        vids = [v for v, _ in identify._clusters(tmp_path)]
+        assert vids == ["realsong123"]
+
+    def test_requeue_moves_media_and_writes_queue(self, tmp_path,
+                                                monkeypatch):
+        self._cluster(tmp_path, "abc123defg")
+        monkeypatch.setattr(
+            identify, "identify",
+            lambda root, delay=0: {
+                "abc123defg": {"dead": False, "author": "RHINO",
+                               "title": "Dio - Holy Diver "
+                                        "(Official Music Video)"}})
+        stats = identify.requeue(tmp_path)
+        assert stats["queued"] == 1
+        recs = json.loads((tmp_path / ".station-queue.json")
+                          .read_text())
+        assert recs[0]["source_id"] == "abc123defg"
+        assert recs[0]["artist"] == "Dio"
+        assert recs[0]["title"] == "Holy Diver"
+        # media drained out of _unsorted into incomplete/
+        assert (tmp_path / "incomplete/yt-abc123defg.mp4").is_file()
+        assert not (tmp_path / "_unsorted/yt-abc123defg").exists()
+
+    def test_requeue_skips_dead_and_junk(self, tmp_path, monkeypatch):
+        self._cluster(tmp_path, "deadvid1")
+        self._cluster(tmp_path, "livevid2")
+        monkeypatch.setattr(
+            identify, "identify",
+            lambda root, delay=0: {
+                "deadvid1": {"dead": True, "author": "", "title": ""},
+                "livevid2": {"dead": False, "author": "X",
+                             "title": "Queen - Bohemian Rhapsody "
+                                      "(Live At Wembley)"}})
+        stats = identify.requeue(tmp_path)
+        assert stats["dead"] == 1 and stats["junk"] == 1
+        assert stats["queued"] == 0
+        assert not (tmp_path / ".station-queue.json").exists()
 
 
 class TestFixMeta:

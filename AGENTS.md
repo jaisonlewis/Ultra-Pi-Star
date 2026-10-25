@@ -69,7 +69,11 @@
   `python -m station.prune <root>` removes full albums, live/non-
   official footage, and ASR-only/obscure entries — folders move to
   `_removed/` (invisible to manifest + Switch scans, recoverable).
-  After any metadata change run `station.organize` to rename dirs.
+  `python -m station.identify <root>` names `_unsorted/yt-*` clusters
+  via YouTube oEmbed (cached in `.identify-cache.json`); `--process`
+  moves them to `incomplete/` + the persisted queue for the next
+  station launch. After any metadata change run `station.organize`
+  to rename dirs.
 - Media roots: `media_dir` is the write target; `media_extra_dirs` are
   read fallbacks. `config.media_path(rel)` resolves across all roots —
   always use it for entry-relative reads (`local_path`, `inst_path`,
