@@ -3,16 +3,15 @@
 A prepared media root is any directory containing ``manifest.json`` —
 or a USB stick root carrying an ``ultrapistar/`` folder or a
 ``.upsmedia`` marker (the same convention the Pi's boot-time detector
-uses). The station writes flat into that root:
+uses). The station writes per-song folders into that root:
 
-    <root>/yt-<id>.mp4               merged video+audio (normalized)
-    <root>/yt-<id>.inst.mp4          karaoke backing (normalized)
-    <root>/yt-<id>.jpg               album art (iTunes/Deezer/thumb/frame)
-    <root>/yt-<id>.vocals.wav        16k vocal stem (Pi scoring analysis)
-    <root>/yt-<id>.analysis.json     pipeline evidence
-    <root>/yt-<id>.mp4.normed        normalization markers
-    <root>/charts/<name>.upsong      generated chart
-    <root>/manifest.json             every finished song
+    <root>/<artist>/<title>/yt-<id>.mp4        merged video+audio (normed)
+    <root>/<artist>/<title>/yt-<id>.inst.mp4   karaoke backing (normed)
+    <root>/<artist>/<title>/yt-<id>.jpg        album art
+    <root>/<artist>/<title>/yt-<id>.vocals.wav 16k vocal stem
+    <root>/<artist>/<title>/yt-<id>.analysis.json  pipeline evidence
+    <root>/<artist>/<title>/<name>.upsong      generated chart
+    <root>/manifest.json                       every finished song
 """
 from __future__ import annotations
 
@@ -113,21 +112,31 @@ def find_prepared_drives() -> list[Path]:
 
 
 def build_zip(rec: dict, root: Path, chart_path: Path | None) -> bytes:
-    """One song's bundle: media + sidecars + chart + manifest."""
+    """One song's bundle: media + sidecars + chart + manifest.
+
+    The zip stays flat (the Pi's unpack_bundle flattens anyway and
+    re-organizes into artist/title dirs on its own root), so manifest
+    paths in the bundle are basenames even when ``rec`` carries nested
+    ones."""
     root = Path(root)
-    names = {rec["local_path"]}
-    stem = Path(rec["local_path"]).stem
-    names.update(p.name for p in root.glob(stem + ".*"))
+    media_rel = Path(rec["local_path"])
+    names = {media_rel.name}
+    names.update(p.name for p in (root / media_rel.parent)
+                 .glob(media_rel.stem + ".*"))
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name in sorted(names):
-            p = root / name
+            p = root / media_rel.parent / name
             if p.is_file():
                 z.write(p, name)
         if chart_path and Path(chart_path).is_file():
             z.write(chart_path, "chart.upsong")
-        man = {"format": 1, "songs": [{**rec, "chart": "chart.upsong"
-                                       if chart_path else ""}]}
+        flat = {**rec, "local_path": media_rel.name,
+                "inst_path": (Path(rec["inst_path"]).name
+                              if rec.get("inst_path") else ""),
+                "art": (Path(rec["art"]).name if rec.get("art") else ""),
+                "chart": "chart.upsong" if chart_path else ""}
+        man = {"format": 1, "songs": [flat]}
         z.writestr(MANIFEST, json.dumps(man, ensure_ascii=False))
     return buf.getvalue()
 

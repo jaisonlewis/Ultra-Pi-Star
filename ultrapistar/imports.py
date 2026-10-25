@@ -79,22 +79,26 @@ def _attach_chart(ctx, rec: dict, base: Path, song_id: int,
 
 def _update_entry(ctx, rec: dict, base: Path, row: dict) -> bool:
     """A bundle for an entry the catalog already has — the station
-    reprocessed existing media. Sidecars land on the WRITE root (the
-    media may live on a nearly-full read fallback like the SD card),
-    inst_path points at the shipped karaoke track, and the shipped
-    chart supersedes any prior generated one."""
+    reprocessed existing media. Sidecars land beside the entry's media
+    on the WRITE root (the media may live on a nearly-full read
+    fallback like the SD card), inst_path points at the shipped
+    karaoke track, and the shipped chart supersedes any prior
+    generated one."""
     db, cfg = ctx["db"], ctx["config"]
     entry_id, song_id = row["id"], row["song_id"]
     local = rec.get("local_path") or row["local_path"] or ""
     if not local or not cfg.media_path(local).exists():
         return False                      # nothing to update against
+    src_dir = base / Path(rec.get("local_path") or local).parent
     stem = Path(local).stem
     wroot = Path(cfg.media_dir)
+    dest_dir = wroot / Path(local).parent
     landed = False
-    for extra in base.glob(stem + ".*"):
+    for extra in src_dir.glob(stem + ".*"):
         if not extra.is_file() or extra.name == Path(local).name:
             continue                      # the media itself stays put
-        dest = wroot / extra.name
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / extra.name
         if not dest.exists():
             try:
                 shutil.move(str(extra), dest)
@@ -125,15 +129,20 @@ def _register_song(ctx, rec: dict, base: Path) -> bool:
     if not local or not src.is_file():
         log.warning("import: %s missing media %s", rec.get("title"), local)
         return False
+    artist = rec.get("artist") or "Unknown"
+    title = rec.get("title") or "Unknown"
     media = cfg.media_path(local)
     if not media.exists():
-        # file isn't on any root yet — move it into the write root
+        # file isn't on any root yet — move it into the write root,
+        # organized into the artist/title folder convention
+        from .mediastore import song_reldir
+        local = f"{song_reldir(artist, title, src.stem)}/{src.name}"
         media = Path(cfg.media_dir) / local
         media.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), media)
     # sidecars travel with the song file (inst stem, vocals, analysis,
     # .normed markers) — move whatever shipped beside it
-    for extra in base.glob(src.stem + ".*"):
+    for extra in src.parent.glob(src.stem + ".*"):
         if extra == src:
             continue
         dest_extra = media.parent / extra.name
@@ -144,10 +153,18 @@ def _register_song(ctx, rec: dict, base: Path) -> bool:
                 pass
     inst = rec.get("inst_path") or ""
     if inst and not cfg.media_path(inst).exists():
+        # sidecars were moved beside the media — re-point inst at the
+        # shipped file's new home
+        moved = media.parent / Path(inst).name
+        inst = (f"{str(media.parent.relative_to(cfg.media_dir))}"
+                .replace("\\", "/") + f"/{moved.name}"
+                if moved.is_file()
+                and media.parent.is_relative_to(cfg.media_dir)
+                else "")
+    if inst and not cfg.media_path(inst).exists():
         inst = ""                       # declared but didn't ship
 
-    song_id = _song_id(ctx["db"], rec.get("artist") or "Unknown",
-                       rec.get("title") or "Unknown")
+    song_id = _song_id(ctx["db"], artist, title)
     provider = rec.get("provider") or "local"
     source_id = rec.get("source_id") or local
     ctx["catalog"].add_media_entry(

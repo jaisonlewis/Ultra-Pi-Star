@@ -52,7 +52,13 @@ def romanize_library(root: Path, only: str = "",
     from ultrapistar.charts import load_chart, save_native
 
     stats = {"ok": 0, "skipped": 0, "err": 0}
-    for path in sorted((root / "charts").glob("*.upsong")):
+    seen = set()
+    cands = sorted((root / "charts").glob("*.upsong")) \
+        + sorted(root.rglob("*.upsong"))
+    for path in cands:
+        if path in seen:
+            continue
+        seen.add(path)
         if only and only.lower() not in path.stem.lower():
             continue
         try:
@@ -92,7 +98,8 @@ def rechart(root: Path, only: str = "", dry_run: bool = False,
         if not local or not chart_rel:
             stats["skipped"] += 1
             continue
-        sidecar = root / (Path(local).stem + ".analysis.json")
+        sidecar = (root / Path(local).parent
+                   / (Path(local).stem + ".analysis.json"))
         if not sidecar.exists():
             stats["no_sidecar"] += 1
             log.info("no sidecar: %s", label)
@@ -120,6 +127,7 @@ def rechart(root: Path, only: str = "", dry_run: bool = False,
                 stats["kept"] += 1
                 log.info("no chart regenerated — kept old: %s", label)
                 continue
+            (root / chart_rel).parent.mkdir(parents=True, exist_ok=True)
             save_native(chart, root / chart_rel, source=chart.source)
             doc["pipeline"] = meta
             doc["lrc_candidates"] = scored

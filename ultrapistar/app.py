@@ -113,7 +113,7 @@ def create_app(config: Config | None = None, seed: bool = True,
     try:
         cutoff = time.time() - 300
         for f in (p for root in config.media_roots()
-                  for p in root.iterdir() if root.is_dir()):
+                  for p in root.rglob("*") if root.is_dir()):
             n = f.name
             if (f.is_file() and f.stat().st_mtime < cutoff
                     and (".norm." in n or n.endswith(".part")

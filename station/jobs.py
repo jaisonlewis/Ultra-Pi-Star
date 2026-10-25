@@ -69,18 +69,25 @@ class _Cancelled(Exception):
 
 
 def _is_source_media(p: Path) -> bool:
-    """Original media only — derived sidecars (inst/vocals) never get
-    their own jobs."""
-    return (p.is_file() and p.suffix.lower() in _MEDIA_EXTS
-            and ".inst." not in p.name
-            and not p.name.endswith(".vocals.wav"))
+    """Original media only — derived sidecars (inst/vocals) and yt-dlp
+    per-format fragments (yt-<id>.f140.m4a) never get their own jobs."""
+    if not (p.is_file() and p.suffix.lower() in _MEDIA_EXTS):
+        return False
+    if ".inst." in p.name or p.name.endswith(".vocals.wav"):
+        return False
+    return not re.search(r"\.f\d+$", p.stem)
 
 
-def _folder_rec(p: Path, row: dict | None) -> dict:
+def _folder_rec(p: Path, row: dict | None, root: Path | None = None) -> dict:
     """Catalog row (or a bare ``yt-<id>`` filename) → a job rec the
-    pipeline can run without touching YouTube."""
-    import re
+    pipeline can run without touching YouTube. ``local_path`` stays
+    root-relative so already-organized files keep their folder."""
     m = re.fullmatch(r"yt-([A-Za-z0-9_-]{6,})", p.stem)
+    try:
+        rel = (str(p.relative_to(root)).replace("\\", "/")
+               if root else p.name)
+    except ValueError:
+        rel = p.name
     return {
         "provider": (row or {}).get("provider")
                     or ("youtube" if m else "local"),
@@ -90,7 +97,7 @@ def _folder_rec(p: Path, row: dict | None) -> dict:
         "title": (row or {}).get("title") or p.stem,
         "duration_sec": (row or {}).get("duration_sec"),
         "thumbnail": (row or {}).get("thumbnail") or "",
-        "local_path": p.name,
+        "local_path": rel,
         "local_file": str(p),
     }
 
@@ -285,21 +292,23 @@ class Station:
                 for s in doc.get("songs", []):
                     if s.get("local_path"):
                         cat[s["local_path"]] = s
+                        cat[Path(s["local_path"]).name] = s
             except (OSError, ValueError):
                 pass
         known = bundle.known_ids(self.dest)
         pairs = bundle.known_songs(self.dest)
         added = skipped = 0
-        for p in sorted(folder.iterdir()):
+        for p in sorted(folder.rglob("*")):
             if not _is_source_media(p):
                 continue
-            row = cat.get(p.name)
+            rel = str(p.relative_to(folder)).replace("\\", "/")
+            row = cat.get(rel) or cat.get(p.name)
             if cat and row is None:
                 continue                    # orphan fragment
             if row and row.get("scored") and not include_charted:
                 skipped += 1
                 continue                    # verified chart already
-            rec = _folder_rec(p, row)
+            rec = _folder_rec(p, row, root=folder)
             if rec["source_id"] in known or _is_known_song(rec, pairs):
                 skipped += 1
                 continue

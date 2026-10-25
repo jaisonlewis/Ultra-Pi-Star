@@ -97,11 +97,16 @@ class TestImportManifest:
         r = rows[0]
         assert r["artist"] == "Test Artist"
         assert r["status"] == "available"
-        assert r["inst_path"] == "yt-abc12345678.inst.mp4"
-        # media moved into the write root, with its sidecar
+        # pushed media lands organized: <artist>/<title>/<files>
+        assert r["local_path"] == \
+            "test_artist/test_song/yt-abc12345678.mp4"
+        assert r["inst_path"] == \
+            "test_artist/test_song/yt-abc12345678.inst.mp4"
         media_dir = Path(ictx["config"].media_dir)
-        assert (media_dir / "yt-abc12345678.mp4").is_file()
-        assert (media_dir / "yt-abc12345678.inst.mp4").is_file()
+        assert (media_dir / "test_artist" / "test_song"
+                / "yt-abc12345678.mp4").is_file()
+        assert (media_dir / "test_artist" / "test_song"
+                / "yt-abc12345678.inst.mp4").is_file()
         # chart copied under generated/ and attached verified
         charts = db.query(
             "SELECT verified, source_repo, media_entry_id FROM chart")
@@ -223,8 +228,8 @@ class TestEndpoints:
         assert r.status_code == 200
         d = r.get_json()
         assert d["ok"] and (d["added"] or d["missing"] or d["skipped"])
-        # media landed in the write root under its manifest name
-        assert (Path(tmp_config.media_dir)
+        # media landed organized under its artist/title folder
+        assert (Path(tmp_config.media_dir) / "test_artist" / "test_song"
                 / "yt-abc12345678.mp4").is_file() or d["missing"] == 1
 
     def test_import_bundle_rejects_nonhost(self, client):

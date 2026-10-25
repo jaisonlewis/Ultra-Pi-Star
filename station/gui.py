@@ -46,6 +46,8 @@ class App(tk.Tk):
             side="left")
         ttk.Button(mid, text="Scan folder",
                    command=self.scan_folder).pack(side="left", padx=4)
+        ttk.Button(mid, text="Organize folders",
+                   command=self.organize_folder).pack(side="left")
 
         pirow = ttk.Frame(self, padding=(8, 4))
         pirow.pack(fill="x")
@@ -188,6 +190,26 @@ class App(tk.Tk):
                                      else "")))
             except Exception as exc:
                 self._events.put((None, "summary", f"scan error: {exc}"))
+        threading.Thread(target=work, daemon=True).start()
+
+    def organize_folder(self):
+        """Reorganize the output folder into artist/title dirs — the
+        one-shot migration for libraries written before the per-song
+        folder layout."""
+        self.status.set("organizing folders …")
+
+        def work():
+            try:
+                from .organize import organize_root
+                out = organize_root(Path(self.dest.get()))
+                self._events.put(
+                    (None, "summary",
+                     f"organized {out['organized']} songs"
+                     + (f", {out['unsorted']} unsorted" if out["unsorted"]
+                        else "")))
+            except Exception as exc:
+                self._events.put((None, "summary",
+                                  f"organize error: {exc}"))
         threading.Thread(target=work, daemon=True).start()
 
     def remove_selected(self):

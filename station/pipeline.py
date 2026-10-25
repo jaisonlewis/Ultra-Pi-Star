@@ -78,19 +78,19 @@ def process_song(rec: dict, dest: Path, models_dir: Path,
 
     on_stage("separating")
     inst_rel = media.stem + ".inst.mp4"
-    voc_wav = dest / (media.stem + ".vocals.wav")
-    if voc_wav.exists() and (dest / inst_rel).exists():
+    voc_wav = media.parent / (media.stem + ".vocals.wav")
+    if voc_wav.exists() and (media.parent / inst_rel).exists():
         import soundfile as sf
         vocal16, _ = sf.read(str(voc_wav), dtype="float32")
     else:
         vocals, accomp = gpu.separate_stems(media)
-        if not (dest / inst_rel).exists():
+        if not (media.parent / inst_rel).exists():
             mix = separate.karaoke_mix(vocals, accomp, guide=0.15)
-            separate.karaoke_mp4(media, mix, dest / inst_rel)
+            separate.karaoke_mp4(media, mix, media.parent / inst_rel)
         vocal16 = separate.mono16(vocals)
         separate.write_wav(voc_wav, vocal16, sr=16000)
-    if (dest / inst_rel).exists():
-        loudness.normalize(dest / inst_rel, target_i=norm_target)
+    if (media.parent / inst_rel).exists():
+        loudness.normalize(media.parent / inst_rel, target_i=norm_target)
 
     on_stage("lyrics")
     seeds = _seed_pairs(meta)
@@ -130,6 +130,29 @@ def process_song(rec: dict, dest: Path, models_dir: Path,
     art_rel = _fetch_art(media, artist, title,
                          rec.get("thumbnail") or "")
 
+    # per-song folder: <root>/<artist>/<title>/<files> — the manifest
+    # paths below are root-relative so the Pi and the Switch resolve
+    # them identically on the prepared stick
+    on_stage("organizing")
+    from ultrapistar.mediastore import song_reldir
+    import shutil
+    reldir = song_reldir(artist, title, media.stem)
+    song_dir = dest / reldir
+    song_dir.mkdir(parents=True, exist_ok=True)
+    for p in media.parent.glob(media.stem + ".*"):
+        if p.is_file() and p.parent != song_dir:
+            tgt = song_dir / p.name
+            tgt.unlink(missing_ok=True)
+            shutil.move(str(p), tgt)
+    chart_rel = ""
+    if chart_path:
+        chart_dest = song_dir / chart_path.name
+        if chart_dest.exists() and chart_dest != chart_path:
+            chart_dest.unlink()           # replace a stale prior chart
+        if not chart_dest.exists():
+            shutil.move(str(chart_path), chart_dest)
+        chart_rel = f"{reldir}/{chart_path.name}"
+
     on_stage("done")
     return {
         "artist": artist, "title": title,
@@ -138,10 +161,12 @@ def process_song(rec: dict, dest: Path, models_dir: Path,
         "source_id": rec["source_id"],
         "duration_sec": duration,
         "thumbnail": rec.get("thumbnail") or "",
-        "local_path": rel,
-        "inst_path": inst_rel if (dest / inst_rel).exists() else "",
-        "chart": (f"charts/{chart_path.name}" if chart_path else ""),
-        "art": art_rel,
+        "local_path": f"{reldir}/{media.name}",
+        "inst_path": (f"{reldir}/{inst_rel}"
+                      if (song_dir / inst_rel).exists() else ""),
+        "chart": chart_rel,
+        "art": (f"{reldir}/{art_rel}"
+                if art_rel and (song_dir / art_rel).exists() else ""),
         "provenance": "station",
     }
 

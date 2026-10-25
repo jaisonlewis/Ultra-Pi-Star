@@ -1,9 +1,9 @@
-"""Media organizer — 'Artist - Title/' folders for browsable roots."""
+"""Media organizer — 'artist/title/' folders for browsable roots."""
 from pathlib import Path
 from types import SimpleNamespace
 
 from ultrapistar.catalog import Catalog
-from ultrapistar.mediastore import organize, song_folder
+from ultrapistar.mediastore import organize, song_folder, song_reldir
 
 
 class TestSongFolder:
@@ -17,6 +17,21 @@ class TestSongFolder:
     def test_fallback_on_empty(self):
         assert song_folder("", "", "yt-abc123") == "yt-abc123"
         assert song_folder("", "") == "unknown"
+
+
+class TestSongReldir:
+    def test_basic(self):
+        assert song_reldir("David Bowie", "Is There Life on Mars?") \
+            == "david_bowie/is_there_life_on_mars"
+
+    def test_strips_path_chars(self):
+        out = song_reldir("AC/DC", "Back in Black")
+        assert "/" not in out.split("/")[0]
+        assert out == "ac_dc/back_in_black"
+
+    def test_fallbacks(self):
+        assert song_reldir("", "", "yt-abc") == "unknown/yt_abc"
+        assert song_reldir("", "") == "unknown/unknown"
 
 
 def _ctx(config, db):
@@ -42,7 +57,7 @@ class TestOrganize:
                    ("yt-abc123.inst.mp4", eid))
         out = organize(_ctx(tmp_config, db))
         assert out["moved"] == 1
-        folder = media / "Weezer - Say It Ain't So"
+        folder = media / "weezer" / "say_it_ain_t_so"
         assert (folder / "yt-abc123.mp4").is_file()
         assert (folder / "yt-abc123.inst.mp4").is_file()
         assert (folder / "yt-abc123.vocals.wav").is_file()
@@ -50,9 +65,9 @@ class TestOrganize:
         e = db.query(
             "SELECT local_path, inst_path FROM media_entry WHERE id=?",
             (eid,))[0]
-        assert e["local_path"] == "Weezer - Say It Ain't So/yt-abc123.mp4"
+        assert e["local_path"] == "weezer/say_it_ain_t_so/yt-abc123.mp4"
         assert (e["inst_path"]
-                == "Weezer - Say It Ain't So/yt-abc123.inst.mp4")
+                == "weezer/say_it_ain_t_so/yt-abc123.inst.mp4")
         # resolution still finds the file through the folder path
         assert tmp_config.media_path(e["local_path"]).is_file()
 
@@ -69,7 +84,7 @@ class TestOrganize:
         assert out["moved"] == 1 and out["skipped"] == 1
         out2 = organize(_ctx(tmp_config, db))
         assert out2["moved"] == 0          # second run is a no-op
-        assert (media / "A - B" / "m.mp3").is_file()
+        assert (media / "a" / "b" / "m.mp3").is_file()
 
     def test_skips_playing_entry(self, tmp_config, db):
         media = Path(tmp_config.media_dir)

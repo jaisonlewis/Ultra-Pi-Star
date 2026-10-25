@@ -45,6 +45,14 @@
   backfill via `POST /api/catalog/backfill-art` (host).
 - Env: `UPS_MIC_DEVICE` (default `default`), `UPS_DIFFICULTY` (0..2),
   `UPS_CHART_LIB`, `UPS_ARTWORK_DIR`.
+- Media layout: prepared roots organize per song —
+  `<root>/<artist_slug>/<title_slug>/yt-<id>.mp4` (+ `.inst.mp4`,
+  `.vocals.wav`, `.analysis.json`, `.jpg`, `<name>.upsong`).
+  `mediastore.song_reldir()` is THE convention — station pipeline,
+  `imports` (push bundles re-organize on receipt), boot-time
+  `organize()`, and `station.organize` (one-shot migration of flat
+  roots; also a GUI button) all share it. Manifest paths are
+  root-relative so both Pi and Switch resolve them identically.
 - Media roots: `media_dir` is the write target; `media_extra_dirs` are
   read fallbacks. `config.media_path(rel)` resolves across all roots —
   always use it for entry-relative reads (`local_path`, `inst_path`,
