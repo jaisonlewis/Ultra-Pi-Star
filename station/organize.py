@@ -149,11 +149,17 @@ def organize_root(root: Path, dry: bool = False) -> dict:
         dest = root / reldir
         names = ([p.name for p in src.parent.glob(rel.stem + ".*")
                   if p.is_file()])
-        # the generated chart ships inside the song folder too
+        # every .upsong beside the media travels too — manifest chart
+        # pointers go stale across reorganizes, the file on disk is the
+        # truth
+        for q in src.parent.glob("*.upsong"):
+            if q.is_file() and q.name not in names:
+                names.append(q.name)
         ch = rec.get("chart") or ""
         ch_path = root / ch if ch else None
         ch_name = ""
-        if ch_path and ch_path.is_file() and ch_path.parent != dest:
+        if (ch_path and ch_path.is_file() and ch_path.parent != dest
+                and ch_path.parent != src.parent):
             ch_name = ch_path.name
             names.append(ch_name)
         if not dry:
@@ -169,7 +175,10 @@ def organize_root(root: Path, dry: bool = False) -> dict:
         rec["local_path"] = f"{reldir}/{rel.name}"
         if rec.get("inst_path"):
             rec["inst_path"] = f"{reldir}/{Path(rec['inst_path']).name}"
-        if ch:
+        ups = list(dest.glob("*.upsong"))
+        if ups:
+            rec["chart"] = f"{reldir}/{ups[0].name}"
+        elif ch:
             rec["chart"] = f"{reldir}/{Path(ch).name}"
         if rec.get("art"):
             rec["art"] = f"{reldir}/{Path(rec['art']).name}"
@@ -249,9 +258,39 @@ def organize_root(root: Path, dry: bool = False) -> dict:
                 except OSError:
                     pass
 
+    # chart-pointer heal: rec['chart'] must resolve to a real file —
+    # earlier passes may have moved the dir without the chart, or a
+    # meta fix renamed the file. Whatever .upsong sits beside the
+    # media is the chart; as a last resort hunt the stale name
+    # anywhere under root and pull it home.
+    healed = 0
+    for rec in doc["songs"]:
+        local = rec.get("local_path") or ""
+        if not local:
+            continue
+        cp = rec.get("chart") or ""
+        if cp and (root / cp).is_file():
+            continue
+        d = root / Path(local).parent
+        ups = list(d.glob("*.upsong")) if d.is_dir() else []
+        if not ups and cp:
+            for cand in root.rglob("*.upsong"):
+                if cand.name == Path(cp).name:
+                    if d.is_dir() and not dry:
+                        shutil.move(str(cand), d / cand.name)
+                        ups = [d / cand.name]
+                    elif d.is_dir():
+                        ups = [d / cand.name]
+                    break
+        if ups:
+            rec["chart"] = str(ups[0].relative_to(root)) \
+                .replace("\\", "/")
+            healed += 1
+
     if not dry:
         bundle.save_manifest(root, doc)
-    return {"organized": moved, "skipped": skipped, "unsorted": unsorted}
+    return {"organized": moved, "skipped": skipped,
+            "unsorted": unsorted, "charts_healed": healed}
 
 
 def main(argv=None) -> None:

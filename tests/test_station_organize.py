@@ -4,6 +4,76 @@ from pathlib import Path
 
 from station.organize import organize_root
 from station.audit import _chart_problems, audit
+from station.fixmeta import heal
+from station.rechart import _meta_ok
+
+
+class TestFixMeta:
+    def test_channel_artist_video_title(self):
+        assert heal({"artist": "RHINO",
+                     "title": "Skid Row - 18 And Life "
+                              "(Official Music Video)"}) == \
+            ("Skid Row", "18 And Life")
+
+    def test_dup_artist_prefix(self):
+        assert heal({"artist": "Iron Maiden",
+                     "title": "Iron Maiden - Run To The Hills "
+                              "(Official Video)"}) == \
+            ("Iron Maiden", "Run To The Hills")
+
+    def test_bracketed_sep_not_a_split(self):
+        assert heal({"artist": "Genesis",
+                     "title": "Throwing It All Away (2007 - Remaster)"}) \
+            is None
+
+    def test_clean_record_untouched(self):
+        assert heal({"artist": "Roxy Music", "title": "Avalon"}) is None
+
+    def test_opaque_id_untouched(self):
+        assert heal({"artist": "Unknown", "title": "yt-abCdEfGhIjK"}) \
+            is None
+
+    def test_tracknum_stripped(self):
+        assert heal({"artist": "When In Rome", "title": "23.The Promise"}) \
+            == ("When In Rome", "The Promise")
+
+    def test_trailing_paren_residue(self):
+        assert heal({"artist": "Skid Row", "title": "Monkey Business ("}) \
+            == ("Skid Row", "Monkey Business")
+
+    def test_song_by_artist_reprise(self):
+        assert heal({"artist": "Nickelback",
+                     "title": "Rockstar- Nickelback"}) == \
+            ("Nickelback", "Rockstar")
+
+    def test_swap_repair(self):
+        assert heal({"artist": "Is This Love", "title": "Whitesnake"}) == \
+            ("Whitesnake", "Is This Love")
+
+
+class TestMetaOk:
+    def test_channel_fix_accepted(self):
+        assert _meta_ok("RHINO",
+                        "White Lion - Radar Love (Official Music Video)",
+                        "White Lion", "Radar Love")
+
+    def test_same_title_different_song_rejected(self):
+        assert not _meta_ok("Twisted Sister", "I Wanna Rock",
+                            "Snoop Dogg", "I Wanna Rock")
+
+    def test_channel_prefixed_record_rejected(self):
+        assert not _meta_ok(
+            "Mötley Crüe",
+            "Mötley Crüe - Girls Girls Girls (Official Music Video)",
+            "MotleyCrueVEVO", "Mötley Crüe - Girls Girls Girls")
+
+    def test_single_char_artist_rejected(self):
+        assert not _meta_ok("Phil Collins", "Both Sides of the Story",
+                            "P", "Both Sides of the Story")
+
+    def test_unknown_artist_trusts_record(self):
+        assert _meta_ok("Unknown", "yt-abCdEfGhIjK",
+                        "Real Artist", "Real Title")
 
 
 class TestChartAudit:
