@@ -15,6 +15,7 @@ in ``_unsorted/<stem>/``. Idempotent — already-organized songs skip.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import sys
@@ -22,6 +23,66 @@ from pathlib import Path
 
 from ultrapistar.mediastore import song_reldir
 from . import bundle
+
+
+def _done_cluster(file_dir: Path, stem: str,
+                  root: Path) -> dict | None:
+    """A stem is DONE when media + karaoke backing + vocals + analysis
+    all sit beside it and a .upsong exists for it — reprocessing would
+    redo finished work. Returns naming info from the analysis sidecar
+    (lrc_chosen carries artist/track), or None when incomplete."""
+    if not all((file_dir / f"{stem}{s}").is_file()
+               for s in (".inst.mp4", ".vocals.wav", ".analysis.json")):
+        return None
+    ups = list(file_dir.glob("*.upsong"))
+    if not ups and (root / "charts").is_dir():
+        ups = list((root / "charts").glob("*.upsong"))
+    if not ups:
+        return None
+    artist = title = ""
+    try:
+        doc = json.loads((file_dir / f"{stem}.analysis.json")
+                         .read_text(encoding="utf-8"))
+        lc = doc.get("lrc_chosen") or []
+        artist, title = (list(lc) + ["", ""])[:2]
+    except (OSError, ValueError):
+        pass
+    if " - " in stem and not (artist and title):
+        artist, title = stem.split(" - ", 1)
+    return {"artist": artist or "", "title": title or "",
+            "chart": ups[0]}
+
+
+def adopt_done(root: Path, p: Path, info: dict,
+               dry: bool = False, save: bool = True) -> dict:
+    """Move a completed file cluster into its artist/title folder and
+    register it in the manifest — a done song becomes a real library
+    entry without reprocessing."""
+    reldir = song_reldir(info["artist"], info["title"], p.stem)
+    dest = root / reldir
+    if not dry:
+        dest.mkdir(parents=True, exist_ok=True)
+        for q in p.parent.glob(p.stem + ".*"):
+            if q.is_file():
+                shutil.move(str(q), dest / q.name)
+        ch = info["chart"]
+        if ch.is_file() and ch.parent != dest:
+            shutil.move(str(ch), dest / ch.name)
+    rec = {
+        "artist": info["artist"] or "Unknown",
+        "title": info["title"] or p.stem,
+        "provider": "youtube" if p.stem.startswith("yt-") else "local",
+        "source_id": p.stem[3:] if p.stem.startswith("yt-") else p.stem,
+        "local_path": f"{reldir}/{p.name}",
+        "inst_path": f"{reldir}/{p.stem}.inst.mp4",
+        "chart": f"{reldir}/{info['chart'].name}",
+        "art": (f"{reldir}/{p.stem}.jpg"
+                if (p.parent / f"{p.stem}.jpg").is_file() else ""),
+        "provenance": "station",
+    }
+    if not dry and save:
+        bundle.append_song(root, rec)
+    return rec
 
 
 def _stem_of(local_path: str) -> str:
@@ -120,6 +181,7 @@ def organize_root(root: Path, dry: bool = False) -> dict:
     unsorted = 0
     skip_names = {"manifest.json", "pi-catalog.json",
                   ".station-queue.json"}
+    media_re = re.compile(r"\.(mp4|mp3|m4a|webm|mkv)$", re.I)
     done_groups = set()
     for p in sorted(root.iterdir()):
         if not p.is_file() or p.name in skip_names:
@@ -132,6 +194,20 @@ def organize_root(root: Path, dry: bool = False) -> dict:
         if key in done_groups:
             continue
         done_groups.add(key)
+        # a fully-processed cluster (inst+vocals+analysis+chart) gets
+        # adopted as a real manifest song, not quarantined
+        media = next(
+            (q for q in root.glob(key + ".*")
+             if q.is_file() and media_re.search(q.name)
+             and ".inst." not in q.name
+             and not re.search(r"\.f\d+\.", q.name)),
+            None)
+        info = media and _done_cluster(root, key, root)
+        if info:
+            rec2 = adopt_done(root, media, info, dry=dry, save=False)
+            doc["songs"].append(rec2)      # saved with the manifest below
+            moved += 1
+            continue
         if " - " in p.stem:
             a, t = p.stem.split(" - ", 1)
             dest = root / song_reldir(a, t, p.stem)
@@ -149,6 +225,29 @@ def organize_root(root: Path, dry: bool = False) -> dict:
                 tgt.unlink(missing_ok=True)
                 shutil.move(str(root / name), tgt)
         unsorted += 1
+
+    # quarantine re-check: a _unsorted/<key>/ cluster that's actually
+    # finished gets promoted into the library
+    unsorted_dir = root / "_unsorted"
+    if unsorted_dir.is_dir():
+        for grp in sorted(unsorted_dir.iterdir()):
+            if not grp.is_dir():
+                continue
+            info = _done_cluster(grp, grp.name, root)
+            media = next(
+                (q for q in grp.iterdir()
+                 if q.is_file() and media_re.search(q.name)
+                 and ".inst." not in q.name
+                 and not re.search(r"\.f\d+\.", q.name)),
+                None)
+            if info and media:
+                rec2 = adopt_done(root, media, info, dry=dry, save=False)
+                doc["songs"].append(rec2)
+                moved += 1
+                try:
+                    grp.rmdir()          # emptied cluster dir
+                except OSError:
+                    pass
 
     if not dry:
         bundle.save_manifest(root, doc)

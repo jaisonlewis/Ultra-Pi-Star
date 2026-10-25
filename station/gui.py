@@ -179,13 +179,15 @@ class App(tk.Tk):
 
         def work():
             try:
-                added, skipped = self._station.add_folder(
+                added, skipped, adopted = self._station.add_folder(
                     Path(self.dest.get()))
                 for jid, job in list(self._station.jobs.items()):
                     if job["status"] == "queued" and jid not in self._rows:
                         self._events.put((jid, "queued", job["rec"]))
                 self._events.put((None, "summary",
                                   f"folder: {added} queued"
+                                  + (f", {adopted} already done" if adopted
+                                     else "")
                                   + (f", {skipped} skipped" if skipped
                                      else "")))
             except Exception as exc:

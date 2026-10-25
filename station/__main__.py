@@ -52,9 +52,10 @@ def _scan(argv):
             print(f"[{jid}] FAILED {payload}", flush=True)
 
     st = Station(root, REPO / "models", on_event=on_event)
-    added, skipped = st.add_folder(root, include_charted=args.all)
-    print(f"queued {added} jobs ({skipped} skipped) — serial pipeline",
-          flush=True)
+    added, skipped, adopted = st.add_folder(
+        root, include_charted=args.all)
+    print(f"queued {added} jobs ({skipped} skipped, "
+          f"{adopted} already done) — serial pipeline", flush=True)
     st._q.join()
     print(f"all jobs finished: {done[0]} processed", flush=True)
 

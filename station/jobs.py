@@ -274,16 +274,19 @@ class Station:
         return title, ids, len(skipped)
 
     def add_folder(self, folder: Path,
-                   include_charted: bool = False) -> tuple[int, int]:
+                   include_charted: bool = False) -> tuple[int, int, int]:
         """Enqueue every media file in a staging folder that still needs
         processing. A ``pi-catalog.json`` (exported from the Pi's
         /api/manage/songs) supplies catalog metadata and tells us which
         entries already carry a verified chart; bare ``yt-<id>`` files
         self-describe. ``include_charted`` re-processes even charted
         entries — a quality upgrade pass over the whole library.
-        Returns (added, skipped)."""
+        Files whose sidecar cluster is already complete
+        (inst+vocals+analysis+chart) are adopted into the manifest
+        instead of reprocessing.
+        Returns (added, skipped, adopted)."""
         import json
-        from . import bundle
+        from . import bundle, organize
         folder = Path(folder)
         cat = {}
         catfile = folder / "pi-catalog.json"
@@ -298,7 +301,7 @@ class Station:
                 pass
         known = bundle.known_ids(self.dest)
         pairs = bundle.known_songs(self.dest)
-        added = skipped = 0
+        added = skipped = adopted = 0
         for p in sorted(folder.rglob("*")):
             relparts = p.relative_to(folder).parts
             if relparts and relparts[0] in ("incomplete", "_unsorted"):
@@ -316,9 +319,24 @@ class Station:
             if rec["source_id"] in known or _is_known_song(rec, pairs):
                 skipped += 1
                 continue
+            # all outputs already exist — file it, don't redo GPU work
+            info = organize._done_cluster(p.parent, p.stem, folder)
+            if info and not include_charted:
+                adopt = dict(info)
+                if row:
+                    adopt["artist"] = (row.get("artist")
+                                       or adopt["artist"])
+                    adopt["title"] = (row.get("title")
+                                      or adopt["title"])
+                adopt["title"] = adopt["title"] or rec["title"]
+                rec2 = organize.adopt_done(self.dest, p, adopt)
+                known.add(rec2["source_id"])
+                pairs.append((rec2["artist"], rec2["title"]))
+                adopted += 1
+                continue
             self.add(rec)
             added += 1
-        return added, skipped
+        return added, skipped, adopted
 
     def _loop(self):
         from .pipeline import process_song
