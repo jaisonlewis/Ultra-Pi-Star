@@ -45,6 +45,10 @@
   backfill via `POST /api/catalog/backfill-art` (host).
 - Env: `UPS_MIC_DEVICE` (default `default`), `UPS_DIFFICULTY` (0..2),
   `UPS_CHART_LIB`, `UPS_ARTWORK_DIR`.
+- Station staging: work happens in `<root>/incomplete/` (downloads
+  resume there across restarts); only fully-processed songs land in
+  the root's artist/title folders, so the finished tree is always
+  safe to copy. `_unsorted/` quarantines un-manifested strays.
 - Media layout: prepared roots organize per song —
   `<root>/<artist_slug>/<title_slug>/yt-<id>.mp4` (+ `.inst.mp4`,
   `.vocals.wav`, `.analysis.json`, `.jpg`, `<name>.upsong`).

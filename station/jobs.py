@@ -198,9 +198,10 @@ class Station:
                     self.on_event(job["id"], "cancelled", "")
                     continue
                 self.on_event(job["id"], "stage", "downloading")
-                self.dest.mkdir(parents=True, exist_ok=True)
-                fname = prov.download(job["rec"], dest_dir=self.dest)
-                job["rec"]["local_file"] = str(self.dest / fname)
+                dl_dir = self.dest / "incomplete"
+                dl_dir.mkdir(parents=True, exist_ok=True)
+                fname = prov.download(job["rec"], dest_dir=dl_dir)
+                job["rec"]["local_file"] = str(dl_dir / fname)
                 job["rec"]["local_path"] = fname
                 self._persist()   # survives restart without re-downloading
                 self._q.put(job)
@@ -299,9 +300,12 @@ class Station:
         pairs = bundle.known_songs(self.dest)
         added = skipped = 0
         for p in sorted(folder.rglob("*")):
+            relparts = p.relative_to(folder).parts
+            if relparts and relparts[0] in ("incomplete", "_unsorted"):
+                continue                # scratch/quarantine subtrees
             if not _is_source_media(p):
                 continue
-            rel = str(p.relative_to(folder)).replace("\\", "/")
+            rel = "/".join(relparts)
             row = cat.get(rel) or cat.get(p.name)
             if cat and row is None:
                 continue                    # orphan fragment

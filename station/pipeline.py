@@ -45,25 +45,29 @@ def process_song(rec: dict, dest: Path, models_dir: Path,
 
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
-    charts_dir = dest / "charts"
+    # everything below happens in <dest>/incomplete — the prepared
+    # root only ever receives a song once it's fully processed, so a
+    # stick copied mid-run never ships half-baked files
+    work = dest / "incomplete"
+    work.mkdir(exist_ok=True)
+    charts_dir = work / "charts"
     charts_dir.mkdir(exist_ok=True)
-    provider = YouTubeProvider(dest)
+    provider = YouTubeProvider(work)
 
     on_stage("downloading")
     if rec.get("local_file"):
-        # media already on disk (pulled from the Pi / local staging) —
-        # copy it into the bundle root under its catalog filename so
-        # local_path still matches the Pi's entry
+        # media already on disk (pulled from the Pi / local staging /
+        # a restarted queue) — work on it inside incomplete/
         import shutil
         media = Path(rec["local_file"])
-        target = dest / (rec.get("local_path") or media.name)
+        target = work / media.name
         if media.resolve() != target.resolve():
             if not target.exists():
                 shutil.copy2(media, target)
             media = target
     else:
-        fname = provider.download(rec, dest_dir=dest)
-        media = dest / fname
+        fname = provider.download(rec, dest_dir=work)
+        media = work / fname
     rel = media.name
 
     on_stage("metadata")

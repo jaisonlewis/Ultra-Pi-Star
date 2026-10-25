@@ -3,7 +3,12 @@
 A prepared media root is any directory containing ``manifest.json`` —
 or a USB stick root carrying an ``ultrapistar/`` folder or a
 ``.upsmedia`` marker (the same convention the Pi's boot-time detector
-uses). The station writes per-song folders into that root:
+uses). Downloads and pipeline intermediates live in
+``<root>/incomplete/`` — a song only reaches the root's artist/title
+folder once it's fully processed, so a partially-copied stick never
+carries half-baked output. The station writes per-song folders:
+
+    <root>/incomplete/yt-<id>.*            work-in-progress (resumable)
 
     <root>/<artist>/<title>/yt-<id>.mp4        merged video+audio (normed)
     <root>/<artist>/<title>/yt-<id>.inst.mp4   karaoke backing (normed)
