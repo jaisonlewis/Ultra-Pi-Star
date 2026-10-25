@@ -6,6 +6,7 @@ from station.organize import organize_root
 from station.audit import _chart_problems, audit
 from station.fixmeta import heal
 from station.rechart import _meta_ok
+from station.prune import _reasons, prune
 
 
 class TestFixMeta:
@@ -74,6 +75,72 @@ class TestMetaOk:
     def test_unknown_artist_trusts_record(self):
         assert _meta_ok("Unknown", "yt-abCdEfGhIjK",
                         "Real Artist", "Real Title")
+
+
+class TestPrune:
+    def _song(self, root, artist, title, dur=200, lyrics="lrc"):
+        """A complete on-disk song cluster for _reasons to inspect."""
+        d = root / "x" / "y"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "m.mp4").write_bytes(b"x")
+        if lyrics is not None:
+            src = {"type": "generated", "lyrics": lyrics}
+            (d / "c.upsong").write_text(json.dumps(
+                {"format": "upsong", "source": src,
+                 "tracks": {"P1": [{"s": 0, "l": 1, "p": 60, "t": "hi"}]}}))
+        return {"artist": artist, "title": title, "duration_sec": dur,
+                "local_path": "x/y/m.mp4",
+                "chart": "x/y/c.upsong" if lyrics is not None else ""}
+
+    def test_full_album_flagged(self, tmp_path):
+        s = self._song(tmp_path, "Dinosaur Jr.",
+                       "Green Mind (Full Album)")
+        assert "album/compilation" in _reasons(tmp_path, s, set())
+
+    def test_long_duration_flagged(self, tmp_path):
+        s = self._song(tmp_path, "X", "Y", dur=3600)
+        assert "album/compilation" in _reasons(tmp_path, s, set())
+
+    def test_live_footage_flagged(self, tmp_path):
+        s = self._song(tmp_path, "Queen",
+                       "Bohemian Rhapsody (Live At Wembley Stadium)")
+        assert "live/non-official" in _reasons(tmp_path, s, set())
+
+    def test_studio_song_named_live_kept(self, tmp_path):
+        s = self._song(tmp_path, "Wings", "Live and Let Die")
+        assert _reasons(tmp_path, s, set()) == []
+
+    def test_best_of_me_is_a_song(self, tmp_path):
+        s = self._song(tmp_path, "Ratt", "Best Of Me")
+        assert _reasons(tmp_path, s, set()) == []
+
+    def test_asr_chart_flagged(self, tmp_path):
+        s = self._song(tmp_path, "Obscure Band", "Rare Song",
+                       lyrics=None)
+        # no chart file at all → no ASR reason (can't score anyway but
+        # prune only pulls proven ASR/unknown entries)
+        s2 = self._song(tmp_path, "Obscure Band", "Rare Song",
+                        lyrics="")
+        (tmp_path / "x/y/c.upsong").write_text(json.dumps(
+            {"format": "upsong", "source": {"type": "generated"},
+             "tracks": {"P1": [{"s": 0, "l": 1, "p": 60, "t": "hi"}]}}))
+        assert "ASR-only lyrics" in _reasons(tmp_path, s2, set())
+
+    def test_unknown_artist_flagged(self, tmp_path):
+        s = self._song(tmp_path, "Unknown", "yt-abCdEfGhIjK")
+        assert "no metadata" in _reasons(tmp_path, s, set())
+
+    def test_prune_moves_dir_and_drops_rec(self, tmp_path):
+        doc = {"songs": [
+            self._song(tmp_path, "Dinosaur Jr.",
+                       "Green Mind (Full Album)"),
+            self._song(tmp_path, "Ratt", "Best Of Me")]}
+        (tmp_path / "manifest.json").write_text(json.dumps(doc))
+        out = prune(tmp_path)
+        assert out["removed"] == 1
+        kept = json.loads((tmp_path / "manifest.json").read_text())
+        assert [s["title"] for s in kept["songs"]] == ["Best Of Me"]
+        assert (tmp_path / "_removed/x/y/m.mp4").is_file()
 
 
 class TestChartAudit:

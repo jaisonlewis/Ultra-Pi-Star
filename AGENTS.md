@@ -66,6 +66,9 @@
   same-title-different-song picks and channel-prefixed records).
   `python -m station.fixmeta <root>` heals video-upload metadata
   offline (channel artist + "Artist - Title" in the title field).
+  `python -m station.prune <root>` removes full albums, live/non-
+  official footage, and ASR-only/obscure entries — folders move to
+  `_removed/` (invisible to manifest + Switch scans, recoverable).
   After any metadata change run `station.organize` to rename dirs.
 - Media roots: `media_dir` is the write target; `media_extra_dirs` are
   read fallbacks. `config.media_path(rel)` resolves across all roots —
