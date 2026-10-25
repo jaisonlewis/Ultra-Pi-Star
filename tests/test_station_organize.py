@@ -192,6 +192,45 @@ class TestPrune:
         assert [s["title"] for s in kept["songs"]] == ["Best Of Me"]
         assert (tmp_path / "_removed/x/y/m.mp4").is_file()
 
+    def _recognised(self, root, artist="Nirvana", track="About A Girl"):
+        """Give the test song a sidecar with lrc_chosen — a provider
+        holds a record for this exact recording."""
+        (root / "x/y/m.analysis.json").write_text(json.dumps(
+            {"lrc_chosen": [artist, track]}))
+
+    def test_recognised_live_release_protected(self, tmp_path):
+        """MTV Unplugged is an official release — LRCLIB carries it,
+        so lrc_chosen exists and the live keyword can't prune it."""
+        s = self._song(tmp_path, "Nirvana",
+                       "About A Girl (Live On MTV Unplugged)")
+        self._recognised(tmp_path)
+        assert _reasons(tmp_path, s, set()) == []
+
+    def test_unrecognised_live_footage_still_flagged(self, tmp_path):
+        """Same live title with no provider record → still bootleg."""
+        s = self._song(tmp_path, "Tool",
+                       "Sober Live at Reading Festival 1993 (Pro Shot)")
+        assert "live/non-official" in _reasons(tmp_path, s, set())
+
+    def test_recognition_does_not_save_albums(self, tmp_path):
+        """A 40-min compilation stays unchartable even if a provider
+        recognises a track on it."""
+        s = self._song(tmp_path, "Queen", "Greatest Hits", dur=2400)
+        self._recognised(tmp_path)
+        assert "album/compilation" in _reasons(tmp_path, s, set())
+
+    def test_keep_file_protects(self, tmp_path):
+        s = self._song(tmp_path, "Queen",
+                       "Bohemian Rhapsody (Live At Wembley)")
+        (tmp_path / "_keep.txt").write_text(
+            "# my favourites\nwembley\n")
+        assert _reasons(tmp_path, s, set(),
+                        ["wembley"]) == []
+        (tmp_path / "manifest.json").write_text(
+            json.dumps({"songs": [s]}))
+        out = prune(tmp_path)             # reads _keep.txt itself
+        assert out["removed"] == 0
+
 
 class TestChartAudit:
     def _upsong(self, notes, source):
