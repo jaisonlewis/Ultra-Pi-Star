@@ -28,13 +28,34 @@ def _stem_of(local_path: str) -> str:
     return Path(local_path).stem
 
 
+def _media_root(root: Path) -> Path:
+    """Pointed at a drive/folder root instead of the media dir — drop
+    into the `ultrapistar/` subdir (or any dir holding manifest.json)
+    so users can aim the tool at a whole stick."""
+    if (root / "manifest.json").is_file():
+        return root
+    for cand in (root / "ultrapistar",):
+        if (cand / "manifest.json").is_file():
+            return cand
+    try:
+        for d in sorted(root.iterdir()):
+            if d.is_dir() and (d / "manifest.json").is_file():
+                return d
+    except OSError:
+        pass
+    return root
+
+
 def organize_root(root: Path, dry: bool = False) -> dict:
-    root = Path(root)
+    root = _media_root(Path(root))
     doc = bundle.load_manifest(root)
     by_id = {s.get("source_id"): s for s in doc.get("songs", [])
              if s.get("source_id")}
     known_files = {Path(s.get("local_path") or "").name
                    for s in doc.get("songs", [])}
+    known_stems = {Path(s.get(k) or "").stem
+                   for s in doc.get("songs", [])
+                   for k in ("local_path", "inst_path")} - {""}
     moved = skipped = 0
     for rec in doc["songs"]:
         local = rec.get("local_path") or ""
@@ -93,28 +114,40 @@ def organize_root(root: Path, dry: bool = False) -> dict:
             rec["art"] = f"{reldir}/{Path(rec['art']).name}"
         moved += 1
 
-    # strays: media files with no manifest record — can't name them,
-    # but at least gather each under its own folder
+    # strays: any file with no manifest record — dead downloads,
+    # format fragments, orphaned sidecars. Group by id token so a
+    # song's whole cluster lands in one folder.
     unsorted = 0
-    media_re = re.compile(r"\.(mp4|mp3|m4a|webm|mkv)$", re.I)
+    skip_names = {"manifest.json", "pi-catalog.json",
+                  ".station-queue.json"}
+    done_groups = set()
     for p in sorted(root.iterdir()):
-        if not (p.is_file() and media_re.search(p.name)):
+        if not p.is_file() or p.name in skip_names:
             continue
-        if ".inst." in p.name or p.name.endswith(".vocals.wav"):
-            continue                # derived sidecar, follows its media
-        tail = p.stem.split(".")[-1]
-        if tail.startswith("f") and tail[1:].isdigit():
-            continue                # yt-dlp format fragment — junk
-        sid = p.stem[3:] if p.stem.startswith("yt-") else p.stem
-        if sid in by_id or p.name in known_files:
-            continue                # manifest song (already handled)
-        dest = root / "_unsorted" / p.stem
-        names = [q.name for q in p.parent.glob(p.stem + ".*")
-                 if q.is_file()]
+        if (p.name in known_files
+                or any(p.name.startswith(s + ".") for s in known_stems)):
+            continue                # a manifest song's file/sidecar
+        m = re.match(r"(yt-[\w-]{6,}|upload-\d+)", p.name)
+        key = m.group(1) if m else p.stem
+        if key in done_groups:
+            continue
+        done_groups.add(key)
+        if " - " in p.stem:
+            a, t = p.stem.split(" - ", 1)
+            dest = root / song_reldir(a, t, p.stem)
+        else:
+            dest = root / "_unsorted" / key
+        names = [q.name for q in root.glob(key + ".*")
+                 if q.is_file() and q.name not in skip_names]
         if not dry:
             dest.mkdir(parents=True, exist_ok=True)
             for name in names:
-                shutil.move(str(p.parent / name), dest / name)
+                if (name in known_files or any(
+                        name.startswith(s + ".") for s in known_stems)):
+                    continue            # belongs to a manifest song
+                tgt = dest / name
+                tgt.unlink(missing_ok=True)
+                shutil.move(str(root / name), tgt)
         unsorted += 1
 
     if not dry:
