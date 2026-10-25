@@ -3,6 +3,36 @@ import json
 from pathlib import Path
 
 from station.organize import organize_root
+from station.audit import _chart_problems, audit
+
+
+class TestChartAudit:
+    def _upsong(self, notes, source):
+        return json.dumps({
+            "format": "upsong", "version": 2, "headers": {},
+            "source": source,
+            "tracks": {"P1": notes}})
+
+    def test_blank_lyrics_flagged(self, tmp_path):
+        p = tmp_path / "x.upsong"
+        p.write_text(self._upsong(
+            [{"s": 0, "l": 1, "p": 60, "t": ""}] * 3,
+            {"type": "generated", "lyrics": "lrc"}))
+        assert "lyrics blank" in _chart_problems(p)
+
+    def test_asr_lyrics_flagged(self, tmp_path):
+        p = tmp_path / "x.upsong"
+        p.write_text(self._upsong(
+            [{"s": 0, "l": 1, "p": 60, "t": "yeah"}],
+            {"type": "generated", "lyrics": None}))
+        assert any("ASR" in i for i in _chart_problems(p))
+
+    def test_lrc_chart_clean(self, tmp_path):
+        p = tmp_path / "x.upsong"
+        p.write_text(self._upsong(
+            [{"s": 0, "l": 1, "p": 60, "t": "real words"}],
+            {"type": "generated", "lyrics": "lrc"}))
+        assert _chart_problems(p) == []
 
 
 def _flat_root(tmp_path: Path) -> Path:
