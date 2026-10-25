@@ -33,11 +33,13 @@ _ALBUM = re.compile(
     r"discography|all.?in.?one|playlist|megamix|compilation|medley|"
     r"plus early singles|the singles collection|greatest hits|"
     r"anthology|box ?set)")
+# "unplugged" and "mtv" are NOT here — MTV Unplugged is an official
+# release series, not bootleg footage
 _LIVE = re.compile(
     r"(?i)(\(live[^)\]]*[\)\]]|\blive at\b|\blive in\b|"
-    r"\blive '?\d{2,4}\b|concert|festival|\btour\b|unplugged|"
+    r"\blive '?\d{2,4}\b|concert|festival|\btour\b|"
     r"bootleg|pro.?shot|soundboard|on stage|\bgig\b|teaser|"
-    r"trailer|rare video|mtv\b)")
+    r"trailer|rare video)")
 _ALBUM_MIN_SEC = 20 * 60        # 20+ min of media is a compilation
 _NONSONG_ARTIST = re.compile(r"(?i)^(unknown|youtube|yt-|various)$")
 
