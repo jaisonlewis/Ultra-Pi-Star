@@ -48,6 +48,9 @@ class App(tk.Tk):
                    command=self.scan_folder).pack(side="left", padx=4)
         ttk.Button(mid, text="Organize folders",
                    command=self.organize_folder).pack(side="left")
+        ttk.Button(mid, text="Process _unsorted",
+                   command=self.process_unsorted).pack(side="left",
+                                                       padx=4)
 
         pirow = ttk.Frame(self, padding=(8, 4))
         pirow.pack(fill="x")
@@ -213,6 +216,17 @@ class App(tk.Tk):
                 self._events.put((None, "summary",
                                   f"organize error: {exc}"))
         threading.Thread(target=work, daemon=True).start()
+
+    def process_unsorted(self):
+        """Identify the _unsorted/ quarantine by its yt-<id> names and
+        enqueue the keepers — runs through the live Station so jobs
+        land in the pipeline immediately (the station also auto-drains
+        on launch; this is the on-demand kick)."""
+        if not self._station:
+            self.status.set("start the station first")
+            return
+        self.status.set("identifying _unsorted …")
+        self._station.drain_unsorted()
 
     def remove_selected(self):
         if not self._station:

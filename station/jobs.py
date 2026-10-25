@@ -132,6 +132,29 @@ class Station:
         self._worker = threading.Thread(
             target=self._loop, daemon=True, name="station-worker")
         self._worker.start()
+        self.drain_unsorted()
+
+    def drain_unsorted(self) -> None:
+        """Identify quarantined ``_unsorted/`` media and enqueue the
+        keepers — off-thread because uncached ids cost an oEmbed round
+        trip each (results cache to .identify-cache.json, so steady
+        state is near-instant)."""
+        threading.Thread(target=self._drain_unsorted, daemon=True,
+                         name="station-unsorted").start()
+
+    def _drain_unsorted(self) -> None:
+        try:
+            from .identify import requeue
+            stats = requeue(self.dest, enqueue=self.add)
+            if stats["queued"]:
+                self.on_event(
+                    None, "summary",
+                    f"unsorted: queued {stats['queued']} identified "
+                    f"songs ({stats['dup_id']} known, "
+                    f"{stats['dup_song']} dup, {stats['dead']} dead, "
+                    f"{stats['junk']} junk)")
+        except Exception:
+            traceback.print_exc()
 
     @property
     def _queue_file(self) -> Path:

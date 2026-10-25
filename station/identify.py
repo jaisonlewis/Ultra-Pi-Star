@@ -88,9 +88,15 @@ def identify(root: Path, delay: float = 0.15) -> dict:
     return out
 
 
-def requeue(root: Path, dry: bool = False, delay: float = 0.15) -> dict:
-    """Identify → parse → dedupe → append job recs to the persisted
-    queue. Dead videos report separately."""
+def requeue(root: Path, dry: bool = False, delay: float = 0.15,
+            enqueue=None) -> dict:
+    """Identify → parse → dedupe → enqueue the keepers.
+
+    ``enqueue`` receives each job rec — pass ``station.add`` from a
+    running Station so jobs route into the live pipeline. Without it
+    (CLI use with the station closed) recs append to the persisted
+    queue file — NEVER append externally while a station runs: its
+    ``_persist()`` rewrites the file from memory and clobbers them."""
     from . import bundle
     from .fixmeta import _split_video_title, _tidy
     from .jobs import _is_known_song
@@ -150,11 +156,14 @@ def requeue(root: Path, dry: bool = False, delay: float = 0.15) -> dict:
             grp.rmdir()
             rec["local_file"] = str(tgt)
             rec["local_path"] = f"incomplete/{tgt.name}"
-            queue_recs.append(rec)
+            if enqueue:
+                enqueue(rec)
+            else:
+                queue_recs.append(rec)
             queued.add(vid)
         stats["queued"] += 1
         pairs.append((artist, title))      # dedupe within this pass too
-    if stats["queued"] and not dry:
+    if stats["queued"] and not dry and not enqueue:
         qfile.write_text(json.dumps(queue_recs, ensure_ascii=False),
                          encoding="utf-8")
     return stats

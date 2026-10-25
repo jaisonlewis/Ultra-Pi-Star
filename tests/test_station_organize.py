@@ -58,6 +58,24 @@ class TestIdentify:
         assert stats["queued"] == 0
         assert not (tmp_path / ".station-queue.json").exists()
 
+    def test_requeue_enqueue_routes_live_no_file(self, tmp_path,
+                                               monkeypatch):
+        """With enqueue=station.add (running station), recs go to the
+        caller and the queue file is NOT touched — a running Station
+        owns .station-queue.json via _persist()."""
+        self._cluster(tmp_path, "liveq12345")
+        monkeypatch.setattr(
+            identify, "identify",
+            lambda root, delay=0: {
+                "liveq12345": {"dead": False, "author": "VEVO",
+                               "title": "Blondie - Heart Of Glass"}})
+        got = []
+        stats = identify.requeue(tmp_path, enqueue=got.append)
+        assert stats["queued"] == 1
+        assert len(got) == 1
+        assert got[0]["local_file"].endswith("yt-liveq12345.mp4")
+        assert not (tmp_path / ".station-queue.json").exists()
+
 
 class TestFixMeta:
     def test_channel_artist_video_title(self):
