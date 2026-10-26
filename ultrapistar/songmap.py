@@ -35,17 +35,35 @@ def decode_media(media_path, rate: int = RATE) -> np.ndarray:
     return np.frombuffer(out, dtype=np.float32)
 
 
-def transcribe_audio(audio: np.ndarray) -> list[tuple[str, float]]:
-    """needle ASR on 16 kHz mono float32 → [(word, start_ms)].
+_WHISPER = None
 
-    Feed it the vocal stem when one was separated — isolated vocals
-    transcribe cleaner than the full mix."""
+
+def _whisper(audio: np.ndarray) -> list[tuple[str, float]]:
+    """faster-whisper (CTranslate2) — the primary ASR. Model from
+    UPS_ASR_MODEL (default large-v3-turbo); int8 CPU inference."""
+    global _WHISPER
+    from faster_whisper import WhisperModel        # optional dependency
+    if _WHISPER is None:
+        model = os.environ.get("UPS_ASR_MODEL", "large-v3-turbo")
+        _WHISPER = WhisperModel(model, device="cpu",
+                                compute_type="int8")
+    # no vad_filter — silero is speech-tuned and clips held sung notes
+    segs, _info = _WHISPER.transcribe(
+        audio, word_timestamps=True)
+    out = []
+    for seg in segs:
+        for w in seg.words or []:
+            t = norm_word(w.word)
+            if t and w.start is not None:
+                out.append((t, w.start * 1000.0))
+    return out
+
+
+def _needle(audio: np.ndarray) -> list[tuple[str, float]]:
     os.environ.setdefault("NEEDLE_TELEMETRY", "0")
     import needle                                   # optional dependency
     r = needle.transcribe(audio, word_timestamps=True) or {}
     words = r.get("words") or []
-    if not words:
-        return []
     starts = [float(w.get("start") or 0) for w in words]
     dur_ms = len(audio) / (RATE / 1000.0)
     scale = 1.0 if (starts and max(starts) > dur_ms * 1.5) else 1000.0
@@ -55,6 +73,25 @@ def transcribe_audio(audio: np.ndarray) -> list[tuple[str, float]]:
         if t:
             out.append((t, float(w.get("start") or 0) * scale))
     return out
+
+
+def transcribe_audio(audio: np.ndarray) -> list[tuple[str, float]]:
+    """ASR on 16 kHz mono float32 → [(word, start_ms)].
+
+    Whisper first (faster-whisper), needle as the fallback when it
+    isn't installed. Feed it the vocal stem when one was separated —
+    isolated vocals transcribe cleaner than the full mix."""
+    try:
+        out = _whisper(audio)
+        if out:
+            return out
+    except ImportError:
+        pass
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "whisper ASR failed — trying needle", exc_info=True)
+    return _needle(audio)
 
 
 def transcribe_media(media_path) -> list[tuple[str, float]]:

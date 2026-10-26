@@ -85,3 +85,5 @@
   via `media.parent`, so they resolve on the same root as the original.
 - Project license is GPL-3.0 (user decision — ports from GPL-3.0 WorldParty).
   Port inventory lives in `NOTICE.md`.
+
+- ASR: faster-whisper (`UPS_ASR_MODEL`, default `large-v3-turbo`, int8 CPU) is the primary transcriber in `songmap.transcribe_audio`; cactus-needle is the fallback when faster-whisper is absent. No VAD filter — silero clips held sung notes.
