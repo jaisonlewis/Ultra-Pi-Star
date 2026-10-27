@@ -167,10 +167,21 @@ def _register_song(ctx, rec: dict, base: Path) -> bool:
     song_id = _song_id(ctx["db"], artist, title)
     provider = rec.get("provider") or "local"
     source_id = rec.get("source_id") or local
+    # a screengrab shipped beside the media (<stem>.jpg) is the
+    # preferred thumbnail — it matches what plays on the TV
+    thumb = rec.get("thumbnail") or ""
+    if not thumb:
+        for ext in (".jpg", ".png"):
+            if (media.parent / (media.stem + ext)).is_file():
+                rel = Path(local).parent.as_posix()
+                thumb = (f"/media/{rel}/{media.stem}{ext}"
+                         if rel != "." else
+                         f"/media/{media.stem}{ext}")
+                break
     ctx["catalog"].add_media_entry(
         song_id, provider, source_id, local_path=local,
         duration_sec=rec.get("duration_sec"),
-        thumbnail=rec.get("thumbnail") or "",
+        thumbnail=thumb,
         provenance=rec.get("provenance") or "station",
         status="available")
     entry_id = ctx["db"].query(

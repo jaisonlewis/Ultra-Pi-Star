@@ -220,7 +220,7 @@ def upload():
         duration_sec=_probe_duration(dest), status="available",
         provenance=f"uploaded file {f.filename[:120]}")
     ctx["catalog"].attach_matching_charts(song_id)
-    ctx["artwork"].ensure(entry_id, artist, title)
+    ctx["artwork"].ensure(entry_id, artist, title, media=dest)
     ensure_map(ctx, entry_id)     # stems + chart gen start now, not at playback
     return jsonify({"ok": True, "entry": ctx["catalog"].entry(entry_id)})
 
@@ -936,11 +936,15 @@ def backfill_art():
     """Fetch artwork for catalog entries that have none."""
     ctx = _ctx()
     rows = ctx["db"].query(
-        "SELECT e.id, s.artist, s.title, e.thumbnail FROM media_entry e"
+        "SELECT e.id, s.artist, s.title, e.thumbnail, e.local_path"
+        " FROM media_entry e"
         " JOIN song s ON s.id=e.song_id"
         " WHERE e.thumbnail='' OR e.thumbnail IS NULL")
     for r in rows:
-        ctx["artwork"].ensure(r["id"], r["artist"], r["title"], "")
+        media = (ctx["config"].media_path(r["local_path"])
+                 if r.get("local_path") else None)
+        ctx["artwork"].ensure(r["id"], r["artist"], r["title"], "",
+                              media=media)
     return jsonify({"ok": True, "queued": len(rows)})
 
 

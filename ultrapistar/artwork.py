@@ -116,28 +116,79 @@ class ArtworkFetcher:
         self._lock = threading.Lock()
 
     def ensure(self, entry_id: int, artist: str, title: str,
-               existing_thumb: str = "") -> None:
+               existing_thumb: str = "", media=None) -> None:
         """Queue a background fetch; keeps an existing thumb if found."""
         with self._lock:
             if entry_id in self._inflight:
                 return
             self._inflight.add(entry_id)
         threading.Thread(
-            target=self._run, args=(entry_id, artist, title, existing_thumb),
+            target=self._run,
+            args=(entry_id, artist, title, existing_thumb, media),
             daemon=True).start()
 
-    def _run(self, entry_id: int, artist: str, title: str,
-             existing_thumb: str) -> None:
+    def _cache_remote(self, url: str, dest: Path) -> bool:
+        """Download a remote thumbnail URL into the artwork dir."""
+        if not url or not url.startswith(("http://", "https://")):
+            return False
         try:
-            url = lookup_artwork(artist, title)
-            if not url:
-                return
-            ext = ".png" if ".png" in url.lower() else ".jpg"
-            dest = self.dir / f"entry-{entry_id}{ext}"
             with urllib.request.urlopen(
                     urllib.request.Request(url, headers=UA),
                     timeout=TIMEOUT) as r:
-                dest.write_bytes(r.read())
+                img = r.read()
+            if len(img) > 5000:
+                dest.write_bytes(img)
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _grab_frame(self, media, dest: Path) -> bool:
+        """Screengrab ~20% into the video → ``dest`` (jpeg)."""
+        import subprocess
+        media = Path(media) if media else None
+        if not media or not media.is_file():
+            return False
+        try:
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries",
+                 "format=duration", "-of", "csv=p=0", str(media)],
+                capture_output=True, text=True, timeout=15)
+            off = min(60.0, max(5.0, float(probe.stdout.strip()) * 0.2))
+            out = subprocess.run(
+                ["ffmpeg", "-v", "error", "-y", "-ss", f"{off:.1f}",
+                 "-i", str(media), "-frames:v", "1", "-q:v", "4",
+                 str(dest)],
+                capture_output=True, timeout=30)
+            return out.returncode == 0 and dest.is_file() \
+                and dest.stat().st_size > 5000
+        except Exception:
+            return False
+
+    def _run(self, entry_id: int, artist: str, title: str,
+             existing_thumb: str, media) -> None:
+        try:
+            # already served locally (cached /api/art/ or /media/
+            # sidecar) — nothing to do
+            if existing_thumb.startswith(("/api/art/", "/media/")):
+                return
+            # A screengrab beats album art when one is available — it
+            # matches what plays on the TV. Order: provider poster
+            # frame → a frame grabbed from the media → iTunes/Deezer.
+            dest = self.dir / f"entry-{entry_id}.jpg"
+            got = self._cache_remote(existing_thumb, dest)
+            if not got:
+                got = self._grab_frame(media, dest)
+            if not got:
+                url = lookup_artwork(artist, title)
+                if not url:
+                    return
+                ext = ".png" if ".png" in url.lower() else ".jpg"
+                dest = self.dir / f"entry-{entry_id}{ext}"
+                with urllib.request.urlopen(
+                        urllib.request.Request(url, headers=UA),
+                        timeout=TIMEOUT) as r:
+                    dest.write_bytes(r.read())
             self.db.execute(
                 "UPDATE media_entry SET thumbnail=? WHERE id=?",
                 (f"/api/art/{dest.name}", entry_id))
