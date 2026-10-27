@@ -106,23 +106,68 @@ def has_real_video(media_path) -> bool:
         return False
 
 
+def _want_hevc() -> bool:
+    """HEVC insts decode on the Pi's hardware block (~half the CPU of
+    software h264). UPS_HEVC=0 opts back out to stream-copy."""
+    import os
+    return os.environ.get("UPS_HEVC", "1") != "0"
+
+
+def _hevc_encoders() -> list:
+    """HEVC encoders this ffmpeg build actually ships, best first."""
+    try:
+        out = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            capture_output=True, text=True, timeout=20)
+        listed = out.stdout
+    except Exception:
+        listed = ""
+    pref = ["hevc_nvenc", "hevc_qsv", "hevc_amf", "hevc_mf", "libx265"]
+    return [e for e in pref if e in listed] or ["libx265"]
+
+
 def karaoke_mp4(media_path, inst: np.ndarray, out_path) -> Path:
-    """Remux the original video with the accompaniment stem as audio —
-    the karaoke-ready file the TV plays. Audio-only uploads (mp3 etc.,
-    including cover-art-only "video" tracks) get an audio-only container."""
+    """Remux/re-encode the original video with the accompaniment stem as
+    audio — the karaoke-ready file the TV plays. With a real video track
+    and UPS_HEVC (default) the stream is re-encoded to HEVC so the Pi can
+    use its hardware decoder. Audio-only uploads (mp3 etc., including
+    cover-art-only "video" tracks) get an audio-only container."""
     import tempfile
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp_path = tmp.name
     try:
         write_wav(tmp_path, inst)
-        maps = (["-map", "0:v", "-map", "1:a", "-shortest"]
-                if has_real_video(media_path) else ["-map", "1:a"])
-        subprocess.run(
-            ["ffmpeg", "-v", "error", "-y",
-             "-i", str(media_path), "-i", tmp_path,
-             *maps, "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
-             str(out_path)],
-            check=True)
+        if not has_real_video(media_path):
+            subprocess.run(
+                ["ffmpeg", "-v", "error", "-y",
+                 "-i", str(media_path), "-i", tmp_path,
+                 "-map", "1:a", "-c:a", "aac", "-b:a", "192k",
+                 str(out_path)],
+                check=True)
+        elif _want_hevc():
+            maps = ["-map", "0:v", "-map", "1:a", "-shortest"]
+            err = None
+            for enc in _hevc_encoders():
+                r = subprocess.run(
+                    ["ffmpeg", "-v", "error", "-y",
+                     "-i", str(media_path), "-i", tmp_path,
+                     *maps, "-c:v", enc, "-tag:v", "hvc1",
+                     "-b:v", "2M", "-maxrate", "4M", "-bufsize", "8M",
+                     "-c:a", "aac", "-b:a", "192k", str(out_path)])
+                if r.returncode == 0:
+                    err = None
+                    break
+                err = r.returncode
+            if err is not None:
+                raise RuntimeError(f"all hevc encoders failed ({err})")
+        else:
+            subprocess.run(
+                ["ffmpeg", "-v", "error", "-y",
+                 "-i", str(media_path), "-i", tmp_path,
+                 "-map", "0:v", "-map", "1:a", "-shortest",
+                 "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                 str(out_path)],
+                check=True)
     finally:
         Path(tmp_path).unlink(missing_ok=True)
     return Path(out_path)
