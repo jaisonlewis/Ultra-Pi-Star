@@ -168,6 +168,10 @@ systemctl --user enable ultrapistar-kiosk 2>/dev/null || true
 mkdir -p "$HOME/.config/labwc"
 cat > "$HOME/.config/labwc/autostart" <<'EOF'
 #!/bin/sh
+# 720p HDMI out by default — the TV's hardware scaler upscales, and the
+# whole render/decode pipeline runs at a quarter of 1080p's cost.
+out=$(wlr-randr 2>/dev/null | awk '/^HDMI|^eDP|^LVDS/{print $1; exit}')
+[ -n "$out" ] && wlr-randr --output "$out" --mode 1280x720@60 2>/dev/null
 systemctl --user start ultrapistar-kiosk
 EOF
 chmod +x "$HOME/.config/labwc/autostart"
