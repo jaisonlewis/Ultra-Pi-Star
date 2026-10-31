@@ -116,8 +116,17 @@ def process_song(rec: dict, dest: Path, models_dir: Path,
     ent = {"entry_id": None, "artist": artist, "title": title,
            "duration_sec": duration}
     meta_out: dict = {}
-    chart = genchart.generate(artist, title, rec_pick, asr, curve,
-                              meta_out=meta_out)
+    # forced alignment first — the acoustic model places the lyric
+    # text; ASR text-matching only runs when alignment can't
+    from ultrapistar.pipeline import _aligned_chart
+    chart, arec = _aligned_chart(
+        recs, vocal16, curve, language or "", Path(models_dir),
+        artist, title, meta_out)
+    if chart is None:
+        chart = genchart.generate(artist, title, rec_pick, asr, curve,
+                                  meta_out=meta_out)
+    else:
+        rec_pick = arec
     _write_analysis(media, ent, asr, scored, rec_pick, curve,
                     meta_out, chart)
     chart_path = None

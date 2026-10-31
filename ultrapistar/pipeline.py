@@ -438,6 +438,55 @@ def _pick_lrc(recs, asr, want_title="", media_dur=0):
     return best, scored
 
 
+_ALIGNER_CACHE: dict = {}
+
+
+def _aligned_chart(recs, audio16, curve, lang, mdir, artist, title,
+                   meta=None):
+    """CTC forced-alignment chart, when a model is installed and some
+    candidate record genuinely matches the audio.
+
+    Every candidate's lyric text is Viterbi-aligned against the vocal
+    stem's frame log-posteriors — the record whose words the model
+    actually *heard* wins (>=35% gate; >=80% is a decisive early win).
+    -> (chart|None, rec|None). Returning (None, *) means the caller
+    should fall back to ASR text-matching."""
+    from . import ctcalign, genchart
+    import numpy as np
+    backend = ctcalign.backend_for(mdir, lang or "")
+    if backend is None or not recs or audio16 is None:
+        return None, None
+    key = (str(mdir), backend)
+    al = _ALIGNER_CACHE.get(key)
+    if al is None:
+        al = ctcalign.Aligner(mdir, backend)   # heavy once: model load
+        _ALIGNER_CACHE[key] = al
+    lp = al.log_probs(np.asarray(audio16, dtype=np.float32))
+    best = None
+    for r in list(recs)[:4]:
+        lines = ctcalign.align_lines(r)
+        n_words = sum(len(l.split()) for l in lines)
+        if n_words < 15:
+            continue
+        w = al.align(lp, lines)
+        heard = sum(1 for x in w
+                    if x["conf"] >= ctcalign.MIN_WORD_CONF)
+        frac = heard / max(1, n_words)
+        if best is None or frac > best[0]:
+            best = (frac, w, lines, r)
+        if frac >= 0.80:
+            break
+    if best is None or best[0] < 0.35:
+        return None, None
+    frac, words, lines, rec = best
+    onsets = ctcalign.onset_strength(
+        np.asarray(audio16, dtype=np.float32))
+    chart = genchart.generate_aligned(
+        artist, title, lines, words, curve, onsets,
+        lyric_rec=rec, backend=backend, meta_out=meta)
+    return (chart, rec) if chart is not None else (None, None)
+
+
 def _write_analysis(media, ent, asr, lrc_scored, rec, curve, meta, chart):
     """<media>.analysis.json — everything the pipeline gathered for this
     entry: transcript, lyric-record verdicts, anchors, pitch curve. The
@@ -494,9 +543,17 @@ def _gen_chart(ctx, app, ent, media, mdir, vocal16, recs=None) -> bool:
     curve = melody.extract_curve(audio16, mdir / "rmvpe.onnx")
     meta = {}
     _stage(ctx, ent["entry_id"], "building chart")
-    chart = genchart.generate(
-        ent.get("artist") or "", ent.get("title") or "", rec, asr, curve,
-        meta_out=meta)
+    # forced alignment first — word onsets come off the acoustic
+    # model, no dependence on how bad the ASR transcript is
+    chart, arec = _aligned_chart(
+        recs, audio16, curve, "", mdir,
+        ent.get("artist") or "", ent.get("title") or "", meta)
+    if chart is not None:
+        rec = arec
+    else:
+        chart = genchart.generate(
+            ent.get("artist") or "", ent.get("title") or "", rec, asr,
+            curve, meta_out=meta)
     _write_analysis(media, ent, asr, lrc_scored, rec, curve, meta, chart)
     if chart is None:
         app.logger.warning(

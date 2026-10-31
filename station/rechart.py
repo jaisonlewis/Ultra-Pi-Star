@@ -132,7 +132,8 @@ def _meta_ok(artist: str, title: str, la: str, lt: str) -> bool:
     return _norm(lt) in blob
 
 
-def rechart_song(root: Path, song: dict) -> tuple[str, dict | None]:
+def rechart_song(root: Path, song: dict,
+                 models_dir=None) -> tuple[str, dict | None]:
     """Regenerate one song's chart from its cached analysis sidecar.
     Returns (status, info) — info carries the chosen lyric record when
     a chart was written, so callers can heal manifest metadata."""
@@ -155,15 +156,38 @@ def rechart_song(root: Path, song: dict) -> tuple[str, dict | None]:
                                        errors="replace"))
     asr = [(w, float(t)) for w, t in doc.get("asr") or []]
     curve = _curve(doc)
-    if len(asr) < 20 or curve is None:
-        return "skipped", None
     recs = lyrics.fetch_all(
         artist, title, duration=song.get("duration_sec"))
     rec, scored = _pick_lrc(
         recs, asr, title, media_dur=song.get("duration_sec") or 0)
     meta: dict = {}
-    chart = genchart.generate(artist, title, rec, asr, curve,
-                              meta_out=meta)
+    chart = None
+    if models_dir is not None:
+        # forced alignment first — acoustic model places the lyric
+        # text; needs the vocal stem beside the media
+        voc = (root / Path(local).parent
+               / (Path(local).stem + ".vocals.wav"))
+        if voc.exists():
+            try:
+                import soundfile as sf
+                from ultrapistar.pipeline import _aligned_chart
+                vocal16, _sr = sf.read(str(voc), dtype="float32")
+                if _sr != 16000:
+                    vocal16 = None
+                elif getattr(vocal16, "ndim", 1) > 1:
+                    vocal16 = vocal16.mean(axis=1)
+                chart, arec = _aligned_chart(
+                    recs, vocal16, curve, "", Path(models_dir),
+                    artist, title, meta)
+                if chart is not None:
+                    rec = arec
+            except Exception as exc:
+                log.info("align failed %s: %s", label, exc)
+    if chart is None and (len(asr) < 20 or curve is None):
+        return "skipped", None
+    if chart is None:
+        chart = genchart.generate(artist, title, rec, asr, curve,
+                                  meta_out=meta)
     if chart is None:
         log.info("no chart regenerated — kept old: %s", label)
         return "kept", None
@@ -184,7 +208,7 @@ def rechart_song(root: Path, song: dict) -> tuple[str, dict | None]:
 
 def rechart(root: Path, only: str = "", dry_run: bool = False,
             delay: float = 0.15, asr_only: bool = False,
-            fix_meta: bool = False) -> dict:
+            fix_meta: bool = False, models_dir=None) -> dict:
     stats = {"ok": 0, "kept": 0, "no_sidecar": 0, "skipped": 0, "err": 0,
              "meta_fixed": 0}
     manifest_path = root / "manifest.json"
@@ -223,7 +247,8 @@ def rechart(root: Path, only: str = "", dry_run: bool = False,
             stats["ok"] += 1
             continue
         try:
-            status, info = rechart_song(root, song)
+            status, info = rechart_song(root, song,
+                                        models_dir=models_dir)
             stats[status] += 1
             # a provider lyric record carries canonical artist/title —
             # heal manifest entries whose artist was the uploader
@@ -298,6 +323,10 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--delay", type=float, default=0.15,
                     help="seconds between songs (lyrics fetch pacing)")
+    ap.add_argument("--models", type=Path, default=None,
+                    help="model dir for the CTC aligner (default "
+                         "$UPS_MODELS_DIR or ./models); absent → the "
+                         "old ASR-matching generator runs instead")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     if args.romanize:
@@ -305,9 +334,15 @@ def main(argv=None) -> int:
                                  dry_run=args.dry_run)
         print("romanize:", stats)
         return 0
+    import os
+    models_dir = (args.models
+                  or os.environ.get("UPS_MODELS_DIR")
+                  or Path("models"))
+    if not Path(models_dir).is_dir():
+        models_dir = None
     stats = rechart(args.root, only=args.only, dry_run=args.dry_run,
                     delay=args.delay, asr_only=args.asr_only,
-                    fix_meta=args.fix_meta)
+                    fix_meta=args.fix_meta, models_dir=models_dir)
     print("rechart:", stats)
     return 0
 

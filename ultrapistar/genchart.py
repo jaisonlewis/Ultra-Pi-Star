@@ -671,3 +671,142 @@ def save_for_entry(chart: Chart, charts_dir, entry_id: int,
     d.mkdir(parents=True, exist_ok=True)
     return save_native(chart, d / f"{safe} [{entry_id}].upsong",
                        source=chart.source)
+
+
+MAX_HELD_MS = 8000.0     # no held note outlives a sax solo
+
+
+def _voiced_end(curve, start: float, limit: float) -> float:
+    """Where the voice stops after ``start``: first >=120 ms unvoiced
+    stretch in the pitch curve, bounded by ``limit``."""
+    if not curve:
+        return limit
+    times, f0, conf = curve
+    if len(times) < 2:
+        return limit
+    hop = (times[1] - times[0]) * 1000.0
+    i0 = int((start + 60.0) / hop)
+    i1 = min(int(limit / hop), len(times))
+    need = int(np.ceil(120.0 / hop))
+    unv = 0
+    for i in range(i0, i1):
+        if f0[i] > 0.0 and conf[i] >= 0.3:
+            unv = 0
+        else:
+            unv += 1
+            if unv >= need:
+                return max((i + 1 - unv) * hop, start + 50.0)
+    return limit
+
+
+def generate_aligned(artist: str, title: str, lines: list[str],
+                     words: list[dict], pitch_curve, onsets=None,
+                     lyric_rec: dict | None = None,
+                     backend: str = "",
+                     meta_out: dict | None = None) -> Chart | None:
+    """Chart from CTC-forced-aligned words (``ctcalign.Aligner.align``
+    output). Word onsets come off the acoustic model, snapped back to
+    spectral-flux attacks; ends are voicing-bounded and never cross
+    the next word. ``source.lyrics`` lands as ``ctc-<backend>`` so
+    batch recharts can tell aligned charts from fuzzy ones.
+    """
+    if len(words) < 15:
+        return None
+    ws = sorted(
+        [(w["text"], w["start_ms"], w["end_ms"], w["line"], w["conf"])
+         for w in words],
+        key=lambda x: (x[1], x[3]))
+    from .ctcalign import MIN_WORD_CONF, onset_snap
+
+    if onsets is not None and len(onsets):
+        starts = [w[1] for w in ws]
+        out = []
+        for i, w in enumerate(ws):
+            back, fwd, mn = ((240.0, 60.0, 0.25)
+                             if w[4] >= MIN_WORD_CONF
+                             else (120.0, 60.0, 0.4))
+            floor = (starts[i - 1] + 50.0) if i else 0.0
+            t = onset_snap(onsets, w[1], back, fwd, mn)
+            out.append(list(w))
+            if t is not None:
+                out[-1][1] = max(t, floor)
+        ws = [tuple(w) for w in out]
+    for i in range(1, len(ws)):
+        if ws[i][1] < ws[i - 1][1] + 40.0:
+            ws[i] = (ws[i][0], ws[i - 1][1] + 40.0, ws[i][2],
+                     ws[i][3], ws[i][4])
+
+    n = len(ws)
+    ws = [list(w) for w in ws]
+    for i in range(n):
+        nxt = ws[i + 1][1] if i + 1 < n else None
+        line_end = nxt is None or ws[i + 1][3] != ws[i][3]
+        if nxt is None:
+            limit = ws[i][1] + 3000.0
+        elif line_end:
+            limit = nxt - 80.0       # leave a breath before the break
+        else:
+            limit = nxt - 20.0
+        limit = min(limit, ws[i][1] + MAX_HELD_MS)
+        start = ws[i][1]
+        end = (_voiced_end(pitch_curve, start, limit)
+               if line_end else max(limit, start + 50.0))
+        ws[i][2] = max(end, start + 50.0)
+
+    all_words, line_breaks = [], []
+    for i, (t, s, e, li, _) in enumerate(ws):
+        all_words.append((t, s, e, li))
+        if i + 1 == n or ws[i + 1][3] != li:
+            line_breaks.append(e)
+
+    wn = (melody.word_notes(*pitch_curve,
+                            [(w, s, e) for w, s, e, _ in all_words])
+          if pitch_curve else [None] * len(all_words))
+    chart = Chart()
+    chart.headers = {"ARTIST": artist, "TITLE": title,
+                     "BPM": str(int(GEN_BPM)), "GAP": "0",
+                     "CREATOR": "ultrapistar-genchart"}
+    p1 = []
+    for i, ((w, s, e, li), p) in enumerate(zip(all_words, wn)):
+        # never let the min-length floor push a note over the next
+        # word's start — fast-sung words get short-but-valid notes
+        if i + 1 < len(all_words):
+            e = min(e, all_words[i + 1][1])
+        tone = (p or {}).get("tone") if p else None
+        kind = ("normal" if (tone is not None
+                             and p["conf"] >= MIN_CONF)
+                else "freestyle")
+        length = max(50, int(e - s))
+        if i + 1 < len(all_words):
+            length = min(length, max(1, int(all_words[i + 1][1] - s)))
+        p1.append(Note(kind, int(s), length,
+                       tone if tone is not None else 0, w, True))
+    chart.tracks["P1"] = p1
+    chart.breaks["P1"] = [int(b) for b in line_breaks[:-1]]
+    heard = sum(1 for w in ws if w[4] >= MIN_WORD_CONF)
+    chart.source = {
+        "type": "generated", "extractor": "rmvpe",
+        "lyrics": f"ctc-{backend}" if backend else "ctc",
+        "lrc": bool((lyric_rec or {}).get("synced")),
+        "align_heard": round(heard / max(1, len(ws)), 2),
+        "align_src": (lyric_rec or {}).get("source") or "lrclib",
+    }
+    if lyric_rec:
+        chart.source["lrc_track"] = lyric_rec.get("track_name")
+        chart.source["lrc_artist"] = lyric_rec.get("artist_name")
+    key = (melody.estimate_key(*pitch_curve) if pitch_curve else None)
+    if key:
+        chart.source["key"] = key
+    if meta_out is not None:
+        meta_out.update({
+            "lyrics": chart.source["lyrics"],
+            "lines": len(lines),
+            "words": len(all_words),
+            "aligned": heard,
+            "of": len(ws)})
+    try:
+        from . import romanize
+        romanize.romanize_chart(chart)
+    except Exception:
+        pass
+    return chart if not chart.validate() else None
