@@ -42,13 +42,20 @@ Design history: `Raspberry_Pi_Karaoke_Phased_Plan (1).md`.
 songs play)
 1. Vocal separation (sherpa-onnx Spleeter int8) → vocal stem + a
    vocal-reduced `*.inst.mp4` karaoke backing
-2. Lyrics: LRCLIB **and** SyncLRC fetched, best record picked by ASR
-   word-match + duration/span proximity (incomplete records penalized)
-3. ASR word timing (needle) anchors the lyric lines
+2. Lyrics: LRCLIB **and** SyncLRC fetched; candidates deduped and kept
+   for competition
+3. **CTC forced alignment** (`ctcalign.py`): every candidate record's
+   text is Viterbi-aligned against the vocal stem's acoustic-model
+   posteriors — Parakeet-CTC-110M for English, Omnilingual-300M-CTC
+   for other languages (onnxruntime, no sherpa CLI needed) — and the
+   record whose words the model actually *heard* wins. Word onsets
+   snap to spectral-flux vocal onsets; ends are voicing-bounded and
+   capped. ASR text-matching remains as the no-models fallback
 4. RMVPE pitch extraction on the vocal stem → note chart
 5. Result: a native `.upsong` chart timed to *that exact media file*
-   (imported charts are only a fallback, warped to the media when the
-   generator can't produce one)
+   — byte-for-byte the same canonical format the Rust app
+   (Pi/Windows/Linux/macOS) and the Switch client read; a prepared
+   USB stick moves between all of them unchanged
 
 **Loudness normalization** — every file (raw and karaoke backing) is
 two-pass loudnorm'd to −16 LUFS at ingest, so base volume is consistent
@@ -94,10 +101,16 @@ to Pi" with the Pi's address + host key. Settings persist between runs.
 | GPU 24 GB+ | whisper large-v3 (fp16) | htdemucs_ft (fine-tuned) |
 
 Per song it runs: yt-dlp download → loudness → **demucs htdemucs**
-separation → lyrics first (LRCLIB/SyncLRC — ASR is only the timing
-backbone, and the last-resort lyric source) → **faster-whisper
-large-v3** word timing (~99 languages incl. Hindi — whisper emits the
-native script) → **RMVPE** pitch → `.upsong` chart → karaoke backing.
+separation → lyrics first (LRCLIB/SyncLRC) → **CTC forced alignment**
+against the vocal stem when the aligner models are installed
+(Parakeet-CTC for English, Omnilingual-CTC otherwise — points
+`--models`/`UPS_MODELS_DIR` at the same `models/` dir as the Rust
+prep; falls back to **faster-whisper large-v3** ASR word-timing when
+they aren't) → **RMVPE** pitch → `.upsong` chart → karaoke backing.
+
+`python -m station.rechart <root> --models <dir>` re-charts a whole
+prepared library with the current stack — machine-generated charts
+regenerate in place, imported/human charts are left alone.
 
 Two delivery paths:
 
@@ -189,8 +202,10 @@ ultrapistar/
   separate.py       vocal/accompaniment separation, karaoke remux
   songmap.py        ASR transcript → word/line timing maps
   lyrics.py         LRCLIB + SyncLRC fetch, best-record selection
+  ctcalign.py       CTC forced alignment: NeMo fbank, windowed ONNX
+                    posteriors, Viterbi + skip states → word timings
   melody.py         RMVPE pitch curve → notes
-  genchart.py       native .upsong chart generation
+  genchart.py       native .upsong chart generation (aligned + fuzzy)
   charts.py         UltraStar .txt parser (imported charts)
   align.py          chroma chart→media alignment (warp fallback)
   loudness.py       EBU R128 normalization (two-pass loudnorm)
